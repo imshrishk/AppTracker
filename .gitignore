@@ -1,0 +1,64 @@
+# ============================================================
+# Android / Gradle
+# ============================================================
+
+# Built outputs
+/build/
+app/build/
+
+# Gradle wrapper (binaries, not scripts)
+.gradle/
+gradle/wrapper/gradle-wrapper.jar
+
+# Gradle local caches and daemon state
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+local.properties
+
+# Kotlin build artifacts
+kotlin-build/
+*.class
+
+# ============================================================
+# Signing & Secrets — NEVER commit these
+# ============================================================
+keystore.properties
+*.jks
+*.keystore
+*.p12
+
+# ============================================================
+# APK / AAB release artifacts (tracked separately / CI)
+# ============================================================
+*.apk
+*.aab
+*.idsig
+
+# ============================================================
+# OS-generated junk
+# ============================================================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Bootstrapped local Gradle installation (not project code)
+# ============================================================
+.gradle-tools/
+
+# ============================================================
+# ProGuard / R8 mapping files (keep these if you use Play Console)
+# If you use Play Console deobfuscation, remove app/build/outputs/mapping from this file
+# ============================================================
+app/build/outputs/mapping/
+
+# ============================================================
+# Test results & coverage
+# ============================================================
+app/build/reports/
+app/build/test-results/

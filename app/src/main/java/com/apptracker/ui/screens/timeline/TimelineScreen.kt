@@ -32,11 +32,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,6 +48,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.db.entity.AppOpsHistoryEntity
+import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.ui.theme.CategoryColors
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -56,6 +61,8 @@ fun TimelineScreen(
     viewModel: TimelineViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    var showCustomPeriodDialog by remember { mutableStateOf(false) }
+    var customPeriodText by remember { mutableStateOf(state.customPeriodDays?.toString() ?: "14") }
 
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("Activity Timeline") })
@@ -77,6 +84,26 @@ fun TimelineScreen(
                             modifier = Modifier.size(16.dp)
                         )
                     }
+                )
+            }
+        }
+
+        LazyRow(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(UsageTimeRange.entries.toList()) { period ->
+                FilterChip(
+                    selected = state.customPeriodDays == null && state.selectedPeriod == period,
+                    onClick = { viewModel.onPeriodChange(period) },
+                    label = { Text(period.label) }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = state.customPeriodDays != null,
+                    onClick = { showCustomPeriodDialog = true },
+                    label = { Text(state.customPeriodDays?.let { "Custom ${it}d" } ?: "Custom") }
                 )
             }
         }
@@ -120,6 +147,38 @@ fun TimelineScreen(
                 }
             }
         }
+    }
+
+    if (showCustomPeriodDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showCustomPeriodDialog = false },
+            title = { Text("Custom Timeline Period") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Show timeline entries from the last N days (1-365).")
+                    OutlinedTextField(
+                        value = customPeriodText,
+                        onValueChange = { customPeriodText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        singleLine = true,
+                        label = { Text("Days") }
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val days = customPeriodText.toIntOrNull()
+                    if (days != null && days in 1..365) {
+                        viewModel.onCustomPeriodDays(days)
+                        showCustomPeriodDialog = false
+                    }
+                }) { Text("Apply") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showCustomPeriodDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

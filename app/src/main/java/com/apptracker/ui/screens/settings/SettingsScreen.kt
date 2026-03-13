@@ -18,11 +18,13 @@ import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -30,10 +32,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +51,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.apptracker.data.model.UsageTimeRange
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +64,20 @@ fun SettingsScreen(
     var showCleanupDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(state.exportContent, state.exportMimeType, state.exportFileName) {
+        val content = state.exportContent
+        val mimeType = state.exportMimeType
+        if (!content.isNullOrBlank() && !mimeType.isNullOrBlank()) {
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = mimeType
+                putExtra(Intent.EXTRA_TEXT, content)
+                putExtra(Intent.EXTRA_SUBJECT, state.exportFileName ?: "apptracker-export")
+            }
+            context.startActivity(Intent.createChooser(sendIntent, "Export AppTracker data"))
+            viewModel.clearPendingExport()
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("Settings") }) },
@@ -131,11 +150,78 @@ fun SettingsScreen(
 
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
+            SectionTitle("Privacy & Experience")
+
+            SettingToggleItem(
+                icon = Icons.Default.Lock,
+                title = "On-device only mode",
+                subtitle = "Keep all analysis local and disable sharing",
+                checked = state.onDeviceOnly,
+                onCheckedChange = { viewModel.setOnDeviceOnly(it) }
+            )
+
+            SettingToggleItem(
+                icon = Icons.Default.Info,
+                title = "Beginner mode",
+                subtitle = "Show plain-language explanations and simpler views",
+                checked = state.beginnerMode,
+                onCheckedChange = { viewModel.setBeginnerMode(it) }
+            )
+
+            Text(
+                text = "Default Insights Period",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                UsageTimeRange.entries.forEach { range ->
+                    FilterChip(
+                        selected = state.defaultUsageRange == range,
+                        onClick = { viewModel.setDefaultUsageRange(range) },
+                        label = { Text(range.label) }
+                    )
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            SectionTitle("Export")
+
+            SettingsItem(
+                icon = Icons.Default.Info,
+                title = "Export CSV",
+                subtitle = if (state.onDeviceOnly) {
+                    "Disabled in On-device only mode"
+                } else {
+                    "Export app security summary as CSV"
+                },
+                enabled = !state.onDeviceOnly,
+                onClick = { viewModel.exportCsv() }
+            )
+
+            SettingsItem(
+                icon = Icons.Default.Info,
+                title = "Export JSON",
+                subtitle = if (state.onDeviceOnly) {
+                    "Disabled in On-device only mode"
+                } else {
+                    "Export app security summary as JSON"
+                },
+                enabled = !state.onDeviceOnly,
+                onClick = { viewModel.exportJson() }
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
             // About
             SectionTitle("About")
             SettingsItem(
                 icon = Icons.Default.Info,
-                title = "AppTracker v1.0.0",
+                title = "AppTracker v1.1.0",
                 subtitle = "Deep permission inspection & battery analysis tool",
                 onClick = { }
             )
@@ -210,12 +296,57 @@ private fun SettingsItem(
     icon: ImageVector,
     title: String,
     subtitle: String,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Column {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingToggleItem(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         )
@@ -232,7 +363,7 @@ private fun SettingsItem(
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary
             )
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleSmall)
                 Text(
                     subtitle,
@@ -240,6 +371,10 @@ private fun SettingsItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange
+            )
         }
     }
 }

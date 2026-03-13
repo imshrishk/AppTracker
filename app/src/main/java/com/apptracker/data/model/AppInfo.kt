@@ -16,6 +16,7 @@ data class AppInfo(
     val isEnabled: Boolean,
     val dataDir: String?,
     val sourceDir: String?,
+    val category: AppCategory = AppCategory.OTHER,
     val permissions: List<PermissionDetail>,
     val riskScore: Int = 0,
     val batteryUsage: BatteryUsageInfo? = null,

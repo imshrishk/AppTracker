@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Process
 import android.os.storage.StorageManager
 import com.apptracker.data.model.AppInfo
+import com.apptracker.data.model.AppCategoryDetector
 import com.apptracker.data.model.AppOpsCategory
 import com.apptracker.data.model.AppOpsEntry
 import com.apptracker.data.model.AppOpsMode
@@ -71,12 +72,14 @@ class PermissionRepository @Inject constructor(
 
     private fun buildAppInfo(pkg: PackageInfo): AppInfo {
         val appInfo = pkg.applicationInfo
+        val appName = appInfo?.loadLabel(packageManager)?.toString() ?: pkg.packageName
+        val isSystemApp = (appInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) ?: 0) != 0
         val permissions = extractPermissions(pkg)
         val appOps = extractAppOps(pkg.packageName)
 
         return AppInfo(
             packageName = pkg.packageName,
-            appName = appInfo?.loadLabel(packageManager)?.toString() ?: pkg.packageName,
+            appName = appName,
             icon = appInfo?.loadIcon(packageManager),
             versionName = pkg.versionName,
             versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -89,10 +92,15 @@ class PermissionRepository @Inject constructor(
             minSdkVersion = appInfo?.minSdkVersion ?: 0,
             installTime = pkg.firstInstallTime,
             lastUpdateTime = pkg.lastUpdateTime,
-            isSystemApp = (appInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) ?: 0) != 0,
+            isSystemApp = isSystemApp,
             isEnabled = appInfo?.enabled ?: false,
             dataDir = appInfo?.dataDir,
             sourceDir = appInfo?.sourceDir,
+            category = AppCategoryDetector.infer(
+                packageName = pkg.packageName,
+                appName = appName,
+                isSystemApp = isSystemApp
+            ),
             permissions = permissions,
             appOpsEntries = appOps,
             storageUsage = queryStorageUsage(pkg.packageName)
@@ -153,13 +161,17 @@ class PermissionRepository @Inject constructor(
 
     private fun getProtectionLevel(permInfo: PermissionInfo?): ProtectionLevel {
         if (permInfo == null) return ProtectionLevel.UNKNOWN
-        return when (permInfo.protection) {
-            PermissionInfo.PROTECTION_NORMAL -> ProtectionLevel.NORMAL
-            PermissionInfo.PROTECTION_DANGEROUS -> ProtectionLevel.DANGEROUS
-            PermissionInfo.PROTECTION_SIGNATURE -> ProtectionLevel.SIGNATURE
-            PermissionInfo.PROTECTION_SIGNATURE or PermissionInfo.PROTECTION_FLAG_PRIVILEGED ->
+        val baseProtection = permInfo.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE
+        val flags = permInfo.protectionLevel and PermissionInfo.PROTECTION_MASK_FLAGS
+        return when {
+            baseProtection == PermissionInfo.PROTECTION_NORMAL -> ProtectionLevel.NORMAL
+            baseProtection == PermissionInfo.PROTECTION_DANGEROUS -> ProtectionLevel.DANGEROUS
+            baseProtection == PermissionInfo.PROTECTION_SIGNATURE &&
+                    flags and PermissionInfo.PROTECTION_FLAG_PRIVILEGED != 0 ->
                 ProtectionLevel.SIGNATURE_OR_SYSTEM
-            PermissionInfo.PROTECTION_INTERNAL -> ProtectionLevel.INTERNAL
+            baseProtection == PermissionInfo.PROTECTION_SIGNATURE -> ProtectionLevel.SIGNATURE
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    baseProtection == PermissionInfo.PROTECTION_INTERNAL -> ProtectionLevel.INTERNAL
             else -> ProtectionLevel.UNKNOWN
         }
     }
@@ -171,11 +183,13 @@ class PermissionRepository @Inject constructor(
 
         for (opName in opsToCheck) {
             try {
-                val mode = appOpsManager.unsafeCheckOpNoThrow(
-                    opName,
-                    getUidForPackage(packageName),
-                    packageName
-                )
+                val uid = getUidForPackage(packageName)
+                val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    appOpsManager.unsafeCheckOpNoThrow(opName, uid, packageName)
+                } else {
+                    @Suppress("DEPRECATION")
+                    appOpsManager.checkOpNoThrow(opName, uid, packageName)
+                }
 
                 entries.add(
                     AppOpsEntry(

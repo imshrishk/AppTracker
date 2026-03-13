@@ -67,8 +67,8 @@ private val pages = listOf(
         icon = Icons.Default.Analytics,
         title = "Your Privacy Dashboard",
         description = "Get a risk score for every app, see which permissions are granted, " +
-                "watch suspicious apps, compare apps side-by-side, and share reports. " +
-                "Everything you need is right on the dashboard.",
+                "watch suspicious apps, and compare apps side-by-side. " +
+                "All analysis stays on your device and no cloud upload is used.",
         actionLabel = "Get Started"
     )
 )

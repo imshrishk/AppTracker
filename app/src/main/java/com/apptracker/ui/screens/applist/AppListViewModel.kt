@@ -1,16 +1,21 @@
 package com.apptracker.ui.screens.applist
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.apptracker.data.db.dao.WatchedAppDao
 import com.apptracker.data.db.entity.WatchedAppEntity
 import com.apptracker.data.model.AppInfo
+import com.apptracker.data.model.AppCategory
 import com.apptracker.domain.usecase.GetInstalledAppsUseCase
+import com.apptracker.util.OnboardingPreferences
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -18,14 +23,24 @@ import javax.inject.Inject
 @HiltViewModel
 class AppListViewModel @Inject constructor(
     private val getInstalledApps: GetInstalledAppsUseCase,
-    private val watchedAppDao: WatchedAppDao
+    private val watchedAppDao: WatchedAppDao,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AppListUiState())
     val uiState: StateFlow<AppListUiState> = _uiState.asStateFlow()
 
     init {
+        observePreferences()
         loadApps()
+    }
+
+    private fun observePreferences() {
+        viewModelScope.launch {
+            OnboardingPreferences.beginnerMode(context).collectLatest { enabled ->
+                _uiState.value = _uiState.value.copy(isBeginnerMode = enabled)
+            }
+        }
     }
 
     fun loadApps() {
@@ -65,6 +80,13 @@ class AppListViewModel @Inject constructor(
 
     fun onFilterChange(filter: FilterOption) {
         _uiState.value = _uiState.value.copy(filterOption = filter)
+        _uiState.value = _uiState.value.copy(
+            filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
+        )
+    }
+
+    fun onCategoryChange(category: AppCategory?) {
+        _uiState.value = _uiState.value.copy(selectedCategory = category)
         _uiState.value = _uiState.value.copy(
             filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
         )
@@ -129,6 +151,10 @@ class AppListViewModel @Inject constructor(
             }
         }
 
+        if (state.selectedCategory != null) {
+            result = result.filter { it.category == state.selectedCategory }
+        }
+
         // Sort
         result = when (state.sortOption) {
             SortOption.NAME_ASC -> result.sortedBy { it.appName.lowercase() }
@@ -154,7 +180,9 @@ data class AppListUiState(
     val searchQuery: String = "",
     val sortOption: SortOption = SortOption.RISK_HIGH,
     val filterOption: FilterOption = FilterOption.ALL,
-    val showSystemApps: Boolean = false
+    val selectedCategory: AppCategory? = null,
+    val showSystemApps: Boolean = false,
+    val isBeginnerMode: Boolean = true
 )
 
 enum class SortOption(val label: String) {

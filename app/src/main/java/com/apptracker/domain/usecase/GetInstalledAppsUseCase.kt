@@ -1,6 +1,7 @@
 package com.apptracker.domain.usecase
 
 import com.apptracker.data.model.AppInfo
+import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.data.repository.BatteryRepository
 import com.apptracker.data.repository.NetworkRepository
 import com.apptracker.data.repository.PermissionRepository
@@ -14,20 +15,28 @@ class GetInstalledAppsUseCase @Inject constructor(
 ) {
     suspend operator fun invoke(
         includeSystem: Boolean = false,
-        enrichWithUsageData: Boolean = true
+        enrichWithUsageData: Boolean = true,
+        usageTimeRange: UsageTimeRange = UsageTimeRange.LAST_24_HOURS,
+        customStartTimeMillis: Long? = null
     ): List<AppInfo> {
         val apps = permissionRepository.getInstalledApps(includeSystem)
 
         if (!enrichWithUsageData) return apps
 
+        val startTime = customStartTimeMillis ?: usageTimeRange.startTimeMillis()
+
         val batteryUsages = try {
-            batteryRepository.getAllBatteryUsage()
+            batteryRepository.getAllBatteryUsage(
+                startTime = startTime
+            )
         } catch (_: Exception) {
             emptyMap()
         }
 
         val networkUsages = try {
-            networkRepository.getAllNetworkUsage()
+            networkRepository.getAllNetworkUsage(
+                startTime = startTime
+            )
         } catch (_: Exception) {
             emptyMap()
         }

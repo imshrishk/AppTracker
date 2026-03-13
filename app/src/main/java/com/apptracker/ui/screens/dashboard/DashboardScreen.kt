@@ -21,9 +21,11 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -42,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.model.AppInfo
+import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.ui.components.AppIcon
 import com.apptracker.ui.components.RiskScoreIndicator
 import com.apptracker.ui.components.StatCard
@@ -63,6 +66,8 @@ fun DashboardScreen(
         watchedEntities.mapNotNull { packageMap[it.packageName] }
     }
     var isRefreshing by remember { mutableStateOf(false) }
+    var showCustomRangeDialog by remember { mutableStateOf(false) }
+    var customRangeText by remember { mutableStateOf(state.customRangeDays?.toString() ?: "14") }
     val pullToRefreshState = rememberPullToRefreshState()
 
     LaunchedEffect(state.isLoading) {
@@ -125,6 +130,45 @@ fun DashboardScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+            Text(
+                text = "Insights Period",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                UsageTimeRange.entries.forEach { range ->
+                    FilterChip(
+                        selected = state.selectedRange == range,
+                        onClick = { viewModel.onRangeSelected(range) },
+                        label = { Text(range.label) }
+                    )
+                }
+                FilterChip(
+                    selected = state.customRangeDays != null,
+                    onClick = { showCustomRangeDialog = true },
+                    label = { Text(state.customRangeDays?.let { "Custom ${it}d" } ?: "Custom") }
+                )
+            }
+
+            if (state.isBeginnerMode) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Text(
+                        text = "Beginner Tip: Higher risk score means an app may need extra review. " +
+                                "Open any app to see clear explanations and recommendations.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp),
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
+
             // Overview stats row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -147,6 +191,40 @@ fun DashboardScreen(
                     subtitle = "permissions",
                     modifier = Modifier.weight(1f)
                 )
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Device Health Score",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = healthLabel(state.deviceHealthScore),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        text = "${state.deviceHealthScore}",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = riskColor(100 - state.deviceHealthScore),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
 
             // Watched apps section
@@ -183,7 +261,7 @@ fun DashboardScreen(
                     }
                 )
                 Text(
-                    text = "Usage in minutes (last 24h)",
+                    text = "Usage in minutes (${state.customRangeDays?.let { "${it}d" } ?: state.selectedRange.label})",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -198,7 +276,7 @@ fun DashboardScreen(
                     }
                 )
                 Text(
-                    text = "Data usage in bytes (last 24h)",
+                    text = "Data usage in bytes (${state.customRangeDays?.let { "${it}d" } ?: state.selectedRange.label})",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -221,6 +299,36 @@ fun DashboardScreen(
             } // end else ->
         } // end when
     } // end outer Column
+
+    if (showCustomRangeDialog) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showCustomRangeDialog = false },
+            title = { Text("Custom Insights Period") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter number of days (1-365) for dashboard battery/network insights.")
+                    OutlinedTextField(
+                        value = customRangeText,
+                        onValueChange = { customRangeText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        label = { Text("Days") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val days = customRangeText.toIntOrNull()
+                    if (days != null && days in 1..365) {
+                        viewModel.onCustomRangeDaysSelected(days)
+                        showCustomRangeDialog = false
+                    }
+                }) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomRangeDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -296,4 +404,12 @@ private fun AppSummaryRow(
             RiskScoreIndicator(score = app.riskScore)
         }
     }
+}
+
+private fun healthLabel(score: Int): String = when {
+    score >= 85 -> "Excellent (A)"
+    score >= 70 -> "Good (B)"
+    score >= 55 -> "Moderate (C)"
+    score >= 40 -> "Needs Attention (D)"
+    else -> "Critical (F)"
 }

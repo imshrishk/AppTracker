@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.model.AppInfo
+import com.apptracker.data.model.AppCategory
 import com.apptracker.ui.components.AppActionsBottomSheet
 import com.apptracker.ui.components.AppIcon
 import com.apptracker.ui.components.RiskBadge
@@ -140,6 +141,24 @@ fun AppListScreen(
                 .padding(horizontal = 16.dp)
         ) { }
 
+        if (state.isBeginnerMode) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                )
+            ) {
+                Text(
+                    text = "Beginner Tip: Start with 'High Risk' filter. " +
+                            "Risk score combines permissions, app behavior, battery, and network signals.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
         // Filter chips
         LazyRow(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -153,6 +172,29 @@ fun AppListScreen(
                     leadingIcon = if (state.filterOption == filter) {
                         { Icon(Icons.Default.FilterList, null) }
                     } else null
+                )
+            }
+        }
+
+        val categories = remember(state.allApps) {
+            state.allApps.map { it.category }.distinct().sortedBy { it.label }
+        }
+        LazyRow(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
+                FilterChip(
+                    selected = state.selectedCategory == null,
+                    onClick = { viewModel.onCategoryChange(null) },
+                    label = { Text("All Categories") }
+                )
+            }
+            items(categories) { category ->
+                FilterChip(
+                    selected = state.selectedCategory == category,
+                    onClick = { viewModel.onCategoryChange(category) },
+                    label = { Text(category.label) }
                 )
             }
         }
@@ -304,6 +346,12 @@ private fun AppListItem(
                         text = "$totalPerms total perms",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Text(
+                        text = app.category.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }

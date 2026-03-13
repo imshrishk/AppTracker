@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,6 +35,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -59,10 +61,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.model.AppInfo
 import com.apptracker.data.model.AppOpsEntry
 import com.apptracker.data.model.AppOpsMode
+import com.apptracker.data.db.entity.AppOpsHistoryEntity
 import com.apptracker.data.model.BatteryUsageInfo
 import com.apptracker.data.model.NetworkUsageInfo
 import com.apptracker.data.model.PermissionDetail
 import com.apptracker.data.model.ProtectionLevel
+import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.domain.model.RiskFlag
 import com.apptracker.domain.model.RiskScore
 import com.apptracker.domain.model.RiskSeverity
@@ -70,6 +74,7 @@ import com.apptracker.ui.components.AppIcon
 import com.apptracker.ui.components.PermissionCard
 import com.apptracker.ui.components.RiskBadge
 import com.apptracker.ui.components.StatCard
+import com.apptracker.ui.components.UsageBarChart
 import com.apptracker.ui.components.riskColor
 import com.apptracker.ui.components.riskLevelFromScore
 import com.apptracker.ui.theme.Denied
@@ -96,6 +101,8 @@ fun AppDetailScreen(
     val context = LocalContext.current
     var showCompareDialog by remember { mutableStateOf(false) }
     var compareSearchQuery by remember { mutableStateOf("") }
+    var showCustomRangeDialog by remember { mutableStateOf(false) }
+    var customRangeText by remember { mutableStateOf(state.customRangeDays?.toString() ?: "14") }
     val compareApps by viewModel.allApps.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -143,7 +150,7 @@ fun AppDetailScreen(
                             context.startActivity(Intent.createChooser(sendIntent, "Share Report"))
                         }
                     },
-                    enabled = state.app != null
+                    enabled = state.app != null && !state.onDeviceOnly
                 ) {
                     Icon(Icons.Default.Share, contentDescription = "Share Report")
                 }
@@ -228,6 +235,23 @@ fun AppDetailScreen(
         // App header
         AppHeaderSection(app, state.riskScore)
 
+        if (state.onDeviceOnly) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                )
+            ) {
+                Text(
+                    text = "Privacy Mode is ON. All analysis stays on your device, and sharing is disabled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
         // Tabs
         ScrollableTabRow(
             selectedTabIndex = selectedTabIndex,
@@ -248,14 +272,87 @@ fun AppDetailScreen(
             }
         }
 
+        if (tabs[selectedTabIndex] == DetailTab.BATTERY || tabs[selectedTabIndex] == DetailTab.NETWORK) {
+            UsageRangeSelector(
+                selectedRange = state.selectedRange,
+                customRangeDays = state.customRangeDays,
+                onRangeSelected = viewModel::onRangeSelected,
+                onCustomRangeClicked = { showCustomRangeDialog = true }
+            )
+        }
+
         // Tab content
         when (tabs[selectedTabIndex]) {
-            DetailTab.PERMISSIONS -> PermissionsTab(app.permissions)
+            DetailTab.PERMISSIONS -> PermissionsTab(app.permissions, state.permissionAuditEntries)
             DetailTab.APP_OPS -> AppOpsTab(app.appOpsEntries)
-            DetailTab.BATTERY -> BatteryTab(app.batteryUsage)
-            DetailTab.NETWORK -> NetworkTab(app.networkUsage)
-            DetailTab.RISK -> RiskTab(state.riskScore)
+            DetailTab.BATTERY -> BatteryTab(app.batteryUsage, state.selectedRange, state.isBeginnerMode, state.batteryTrend)
+            DetailTab.NETWORK -> NetworkTab(app.networkUsage, state.selectedRange, state.isBeginnerMode, state.networkTrend)
+            DetailTab.RISK -> RiskTab(state.riskScore, state.isBeginnerMode)
             DetailTab.INFO -> AppInfoTab(app)
+        }
+    }
+
+    if (showCustomRangeDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomRangeDialog = false },
+            title = { Text("Custom Time Period") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter number of days (1-365) to analyze battery and network data.")
+                    OutlinedTextField(
+                        value = customRangeText,
+                        onValueChange = { customRangeText = it.filter { ch -> ch.isDigit() }.take(3) },
+                        singleLine = true,
+                        label = { Text("Days") }
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val days = customRangeText.toIntOrNull()
+                    if (days != null && days in 1..365) {
+                        viewModel.onCustomRangeDaysSelected(days)
+                        showCustomRangeDialog = false
+                    }
+                }) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { showCustomRangeDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun UsageRangeSelector(
+    selectedRange: UsageTimeRange,
+    customRangeDays: Int?,
+    onRangeSelected: (UsageTimeRange) -> Unit,
+    onCustomRangeClicked: () -> Unit
+) {
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(UsageTimeRange.entries) { range ->
+            FilterChip(
+                selected = selectedRange == range,
+                onClick = { onRangeSelected(range) },
+                label = { Text(range.label) }
+            )
+        }
+        item {
+            FilterChip(
+                selected = customRangeDays != null,
+                onClick = onCustomRangeClicked,
+                label = { Text(customRangeDays?.let { "Custom ${it}d" } ?: "Custom") }
+            )
         }
     }
 }
@@ -290,6 +387,11 @@ private fun AppHeaderSection(app: AppInfo, riskScore: RiskScore?) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Text(
+                    text = app.category.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
 
             riskScore?.let {
@@ -310,7 +412,10 @@ private fun AppHeaderSection(app: AppInfo, riskScore: RiskScore?) {
 // ============ PERMISSIONS TAB ============
 
 @Composable
-private fun PermissionsTab(permissions: List<PermissionDetail>) {
+private fun PermissionsTab(
+    permissions: List<PermissionDetail>,
+    permissionAuditEntries: List<AppOpsHistoryEntity>
+) {
     val dangerous = permissions.filter { it.isDangerous }
     val normal = permissions.filter { it.protectionLevel == ProtectionLevel.NORMAL }
     val signature = permissions.filter {
@@ -384,6 +489,35 @@ private fun PermissionsTab(permissions: List<PermissionDetail>) {
             }
             items(other) { perm ->
                 PermissionCard(permission = perm, showDetails = true)
+            }
+        }
+
+        if (permissionAuditEntries.isNotEmpty()) {
+            item { SectionLabel("Permission Usage Audit (${permissionAuditEntries.size})") }
+            items(permissionAuditEntries.take(12)) { entry ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = entry.opName.removePrefix("android:"),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = "Last: ${formatTimestamp(entry.lastAccessTime.coerceAtLeast(entry.timestamp))}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Accesses: ${entry.accessCount} • Rejects: ${entry.rejectCount}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
 
@@ -494,7 +628,12 @@ private fun AppOpsRow(op: AppOpsEntry) {
 // ============ BATTERY TAB ============
 
 @Composable
-private fun BatteryTab(battery: BatteryUsageInfo?) {
+private fun BatteryTab(
+    battery: BatteryUsageInfo?,
+    range: UsageTimeRange,
+    isBeginnerMode: Boolean,
+    trendData: List<Pair<String, Float>>
+) {
     if (battery == null) {
         EmptyTabContent("No battery data available", "Grant Usage Access in Settings")
         return
@@ -506,6 +645,23 @@ private fun BatteryTab(battery: BatteryUsageInfo?) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (isBeginnerMode) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Text(
+                        text = "This section shows how long this app stayed active over ${range.label}. " +
+                                "Higher background time can impact battery life.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -538,6 +694,18 @@ private fun BatteryTab(battery: BatteryUsageInfo?) {
             DetailRow("Last Used", formatTimestamp(battery.lastTimeUsed))
         }
 
+        if (trendData.isNotEmpty()) {
+            item {
+                SectionLabel("Usage Trend")
+                UsageBarChart(items = trendData, maxItems = 7)
+                Text(
+                    text = "Minutes over ${range.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         if (battery.wakelockTimeMs > 0 || battery.alarmWakeups > 0) {
             item {
                 SectionLabel("Wake Activity")
@@ -553,7 +721,12 @@ private fun BatteryTab(battery: BatteryUsageInfo?) {
 // ============ NETWORK TAB ============
 
 @Composable
-private fun NetworkTab(network: NetworkUsageInfo?) {
+private fun NetworkTab(
+    network: NetworkUsageInfo?,
+    range: UsageTimeRange,
+    isBeginnerMode: Boolean,
+    trendData: List<Pair<String, Float>>
+) {
     if (network == null) {
         EmptyTabContent("No network data available", "May require phone state permission")
         return
@@ -565,6 +738,23 @@ private fun NetworkTab(network: NetworkUsageInfo?) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        if (isBeginnerMode) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Text(
+                        text = "This section shows how much data this app used over ${range.label}. " +
+                                "Background data can continue even when you are not using the app.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+        }
+
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -592,16 +782,20 @@ private fun NetworkTab(network: NetworkUsageInfo?) {
             SectionLabel("WiFi Usage")
             DetailRow("Downloaded", NetworkUsageInfo.formatBytes(network.wifiRxBytes))
             DetailRow("Uploaded", NetworkUsageInfo.formatBytes(network.wifiTxBytes))
-            DetailRow("Packets Rx", "${network.wifiRxPackets}")
-            DetailRow("Packets Tx", "${network.wifiTxPackets}")
+            if (!isBeginnerMode) {
+                DetailRow("Packets Rx", "${network.wifiRxPackets}")
+                DetailRow("Packets Tx", "${network.wifiTxPackets}")
+            }
         }
 
         item {
             SectionLabel("Mobile Data Usage")
             DetailRow("Downloaded", NetworkUsageInfo.formatBytes(network.mobileRxBytes))
             DetailRow("Uploaded", NetworkUsageInfo.formatBytes(network.mobileTxBytes))
-            DetailRow("Packets Rx", "${network.mobileRxPackets}")
-            DetailRow("Packets Tx", "${network.mobileTxPackets}")
+            if (!isBeginnerMode) {
+                DetailRow("Packets Rx", "${network.mobileRxPackets}")
+                DetailRow("Packets Tx", "${network.mobileTxPackets}")
+            }
         }
 
         item {
@@ -617,6 +811,18 @@ private fun NetworkTab(network: NetworkUsageInfo?) {
             }
         }
 
+        if (trendData.isNotEmpty()) {
+            item {
+                SectionLabel("Data Trend")
+                UsageBarChart(items = trendData, maxItems = 7)
+                Text(
+                    text = "MB over ${range.label}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         item { Spacer(modifier = Modifier.height(32.dp)) }
     }
 }
@@ -624,7 +830,7 @@ private fun NetworkTab(network: NetworkUsageInfo?) {
 // ============ RISK TAB ============
 
 @Composable
-private fun RiskTab(riskScore: RiskScore?) {
+private fun RiskTab(riskScore: RiskScore?, isBeginnerMode: Boolean) {
     if (riskScore == null) {
         EmptyTabContent("Risk analysis unavailable")
         return
@@ -636,6 +842,34 @@ private fun RiskTab(riskScore: RiskScore?) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "Why this score?",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = if (isBeginnerMode) {
+                            "AppTracker combines permissions, behavior, network activity, and battery impact. " +
+                                    "Higher scores indicate higher potential privacy/security risk."
+                        } else {
+                            "Overall score is composed from Permission, Behavior, Network, and Battery sub-scores. " +
+                                    "Flags below explain which signals increased risk."
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
         item {
             // Score breakdown
             Row(
@@ -675,6 +909,25 @@ private fun RiskTab(riskScore: RiskScore?) {
                     value = "${riskScore.batteryScore}",
                     modifier = Modifier.weight(1f)
                 )
+            }
+        }
+
+        if (!isBeginnerMode) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Score components", style = MaterialTheme.typography.titleSmall)
+                        DetailRow("Permissions", "Sensitive permissions and grants")
+                        DetailRow("Behavior", "Suspicious patterns and app-ops activity")
+                        DetailRow("Network", "Background transfer and send/receive anomalies")
+                        DetailRow("Battery", "High background usage and wake activity")
+                    }
+                }
             }
         }
 

@@ -8,6 +8,7 @@ import com.apptracker.domain.model.RiskFlagType
 import com.apptracker.domain.model.RiskLevel
 import com.apptracker.domain.model.RiskScore
 import com.apptracker.domain.model.RiskSeverity
+import com.apptracker.util.SecurityHeuristics
 import javax.inject.Inject
 
 class CalculateRiskScoreUseCase @Inject constructor() {
@@ -89,6 +90,22 @@ class CalculateRiskScoreUseCase @Inject constructor() {
                     severity = RiskSeverity.WARNING,
                     title = "SMS Access",
                     description = "App can read, send, or intercept SMS messages."
+                )
+            )
+        }
+
+        val hasClipboardAccess = app.appOpsEntries.any {
+            it.opName.contains("CLIPBOARD", ignoreCase = true) &&
+                (it.mode == AppOpsMode.ALLOWED || it.mode == AppOpsMode.FOREGROUND)
+        }
+        if (hasClipboardAccess) {
+            flags.add(
+                RiskFlag(
+                    type = RiskFlagType.CLIPBOARD_ACCESS,
+                    severity = RiskSeverity.INFO,
+                    title = "Clipboard Access",
+                    description = "App can read clipboard contents through App Ops. " +
+                            "Review whether it truly needs access to copied text or codes."
                 )
             )
         }
@@ -210,6 +227,53 @@ class CalculateRiskScoreUseCase @Inject constructor() {
             }
             score
         } ?: 0
+
+        // --- Hidden process scanner ---
+        if (SecurityHeuristics.hiddenProcessRisk(app)) {
+            flags.add(
+                RiskFlag(
+                    type = RiskFlagType.HIDDEN_PROCESS,
+                    severity = RiskSeverity.DANGER,
+                    title = "Hidden Background Process",
+                    description = "App shows signals of running a persistent hidden background process " +
+                            "(boot receiver + foreground service + suspicious name or excessive bg usage)."
+                )
+            )
+        }
+
+        // --- Certificate pinning absent (heuristic: app uses network but has no pinning config) ---
+        val usesNetwork = app.networkUsage?.let { it.totalBytes > 0 } ?: false
+        val hasNetworkPermission = app.permissions.any {
+            it.isGranted && it.permissionName.contains("INTERNET", ignoreCase = true)
+        }
+        if (usesNetwork && hasNetworkPermission && dangerousCount >= 3 && !app.isSystemApp) {
+            // Only flag high-data apps as needing cert pinning (heuristic)
+            val highDataUse = (app.networkUsage?.totalBytes ?: 0L) > 10_485_760L
+            if (highDataUse) {
+                flags.add(
+                    RiskFlag(
+                        type = RiskFlagType.CERTIFICATE_PINNING_ABSENT,
+                        severity = RiskSeverity.INFO,
+                        title = "Certificate Pinning Unverified",
+                        description = "High-data app with sensitive permissions. " +
+                                "Use the App Info quick APK scan to check for local certificate pinning evidence."
+                    )
+                )
+            }
+        }
+
+        // --- Category baseline comparison ---
+        SecurityHeuristics.categoryBaselineExceedance(app)?.let { ratio ->
+            flags.add(
+                RiskFlag(
+                    type = RiskFlagType.CATEGORY_BASELINE_EXCEEDED,
+                    severity = RiskSeverity.WARNING,
+                    title = "Exceeds Category Baseline",
+                    description = "This ${app.category.label} app holds ${"%.1f".format(ratio)}× more " +
+                            "dangerous permissions than the average ${app.category.label} app."
+                )
+            )
+        }
 
         // --- Calculate scores ---
         val permissionScore = minOf(

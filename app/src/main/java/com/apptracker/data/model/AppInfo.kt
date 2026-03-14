@@ -16,6 +16,7 @@ data class AppInfo(
     val isEnabled: Boolean,
     val dataDir: String?,
     val sourceDir: String?,
+    val linuxUid: Int = -1,
     val category: AppCategory = AppCategory.OTHER,
     val permissions: List<PermissionDetail>,
     val riskScore: Int = 0,
@@ -23,7 +24,10 @@ data class AppInfo(
     val networkUsage: NetworkUsageInfo? = null,
     val appOpsEntries: List<AppOpsEntry> = emptyList(),
     val sensorAccess: List<SensorAccessInfo> = emptyList(),
-    val storageUsage: StorageUsageInfo? = null
+    val storageUsage: StorageUsageInfo? = null,
+    val installSourcePackage: String? = null,
+    val installSourceLabel: String = "Unknown",
+    val isSideloaded: Boolean = false
 )
 
 data class PermissionDetail(

@@ -16,7 +16,8 @@ data class AppCompareUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
     val appA: AppInfo? = null,
-    val appB: AppInfo? = null
+    val appB: AppInfo? = null,
+    val appC: AppInfo? = null
 )
 
 @HiltViewModel
@@ -27,6 +28,7 @@ class AppCompareViewModel @Inject constructor(
 
     private val packageA: String = checkNotNull(savedStateHandle["packageA"])
     private val packageB: String = checkNotNull(savedStateHandle["packageB"])
+    private val packageC: String? = savedStateHandle["packageC"]
 
     private val _uiState = MutableStateFlow(AppCompareUiState())
     val uiState: StateFlow<AppCompareUiState> = _uiState.asStateFlow()
@@ -42,7 +44,8 @@ class AppCompareViewModel @Inject constructor(
                 val apps = getInstalledApps(includeSystem = true)
                 val a = apps.find { it.packageName == packageA }
                 val b = apps.find { it.packageName == packageB }
-                _uiState.value = AppCompareUiState(isLoading = false, appA = a, appB = b)
+                val c = packageC?.let { pkg -> apps.find { it.packageName == pkg } }
+                _uiState.value = AppCompareUiState(isLoading = false, appA = a, appB = b, appC = c)
             } catch (e: Exception) {
                 _uiState.value = AppCompareUiState(
                     isLoading = false,

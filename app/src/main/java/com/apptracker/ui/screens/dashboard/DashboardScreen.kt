@@ -46,6 +46,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.model.AppInfo
 import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.ui.components.AppIcon
+import com.apptracker.ui.components.LineChart
+import com.apptracker.ui.components.RadarChart
 import com.apptracker.ui.components.RiskScoreIndicator
 import com.apptracker.ui.components.StatCard
 import com.apptracker.ui.components.UsageBarChart
@@ -57,6 +59,8 @@ import com.apptracker.ui.theme.StarAmber
 fun DashboardScreen(
     onAppClick: (String) -> Unit,
     onViewAllClick: () -> Unit,
+    onOpenRemediation: () -> Unit,
+    onOpenDnsActivity: () -> Unit = {},
     viewModel: DashboardViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -169,6 +173,147 @@ fun DashboardScreen(
                 }
             }
 
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = "Analysis Thresholds",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "High-risk cutoff: ${state.highRiskThreshold}+  •  Heavy background: ${state.backgroundHeavyHours}h+",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Adjust these in Settings → Privacy & Experience",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Threat Feed",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${state.appsUpdated7d} updated • ${state.permissionDeltaEvents7d} deltas • ${state.nightActivityEvents7d} night anomalies • ${state.sensitiveAppOpsEvents7d} sensitive events • ${state.autoRevokeEvents7d} auto-revokes • ${state.darkPatternEvents7d} re-requests",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (state.watchlistChangeEvents7d > 0 || state.permissionSpikeEvents7d > 0 ||
+                        state.burstNetworkEvents7d > 0 || state.appInstallEvents7d > 0 ||
+                        state.heuristicSecurityEvents7d > 0 || state.dnsLeakEvents7d > 0) {
+                        Text(
+                            text = buildString {
+                                if (state.watchlistChangeEvents7d > 0) append("${state.watchlistChangeEvents7d} watchlist • ")
+                                if (state.permissionSpikeEvents7d > 0) append("${state.permissionSpikeEvents7d} spikes • ")
+                                if (state.burstNetworkEvents7d > 0) append("${state.burstNetworkEvents7d} burst-net • ")
+                                if (state.heuristicSecurityEvents7d > 0) append("${state.heuristicSecurityEvents7d} heuristic flags • ")
+                                if (state.dnsLeakEvents7d > 0) append("${state.dnsLeakEvents7d} DNS leak signals • ")
+                                if (state.appInstallEvents7d > 0) append("${state.appInstallEvents7d} installs")
+                                trimEnd(' ', '•')
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                        )
+                    }
+                            if (state.dnsTrackerHits7d > 0) {
+                                Text(
+                                    text = "${state.dnsTrackerHits7d} DNS tracker hits",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                }
+            }
+
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onOpenRemediation),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Guided Remediation",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Step-by-step fixes for your highest-risk apps",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = onOpenRemediation) { Text("Open") }
+                }
+            }
+
+                // DNS Activity shortcut
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onOpenDnsActivity),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "DNS Activity",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (state.dnsTrackerHits7d > 0)
+                                    "${state.dnsTrackerHits7d} tracker hits in the last 7 days"
+                                else
+                                    "Monitor DNS queries for tracker domains locally",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (state.dnsTrackerHits7d > 0)
+                                    MaterialTheme.colorScheme.error
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = onOpenDnsActivity) { Text("View") }
+                    }
+                }
+
             // Overview stats row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -227,6 +372,218 @@ fun DashboardScreen(
                 }
             }
 
+            if (state.riskRadarValues.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Risk Surface",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "A quick view of your current permission, behavior, network, battery, and data-collection exposure.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        RadarChart(values = state.riskRadarValues, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+
+            if (state.healthTrendSixMonths.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.18f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Health Trend (6 Months)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        LineChart(points = state.healthTrendSixMonths, maxPoints = 6)
+                        Text(
+                            text = "Benchmark: ${state.healthBenchmarkLabel} • Recent avg ${state.recentAverageHealthScore}/100",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (state.baselineSummary != null || state.healthChecklist.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.24f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Baseline & Checklist",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (state.checklistTotalCount > 0) {
+                            Text(
+                                text = "${state.checklistConfiguredCount} of ${state.checklistTotalCount} best practices configured",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        state.baselineSummary?.let { baseline ->
+                            Text(
+                                text = buildString {
+                                    append("Baseline captured with ${baseline.appCount} apps")
+                                    append(" • Health ${baseline.healthScore}/100")
+                                    state.healthDeltaVsBaseline?.let { delta ->
+                                        append(" • ")
+                                        append(if (delta >= 0) "+$delta vs baseline" else "$delta vs baseline")
+                                    }
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        state.healthChecklist.forEach { item ->
+                            Text(
+                                text = (if (item.configured) "✅ " else "⚠️ ") + item.label,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+
+            state.peerBenchmark?.let { benchmark ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.24f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Peer Benchmark",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Closest local archetype: ${benchmark.archetypeName} • ${benchmark.archetypeHealthScore}/100",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = benchmark.comparisonLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = benchmark.archetypeDescription,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        benchmark.matchedSignals.forEach { signal ->
+                            Text(
+                                text = "• $signal",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (state.healthImpactEntries.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Health Score Breakdown",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Top apps dragging device health right now:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        state.healthImpactEntries.forEach { entry ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onAppClick(entry.app.packageName) },
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = entry.app.appName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "-${entry.impactPoints} pts",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (state.highBackgroundApps.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Background Activity Alerts",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${state.highBackgroundApps.size} apps exceeded ${state.backgroundHeavyHours}h background usage in this period.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Watched apps section
             if (watchedApps.isNotEmpty()) {
                 SectionHeader(
@@ -242,10 +599,17 @@ fun DashboardScreen(
             // High risk apps section
             if (state.highRiskApps.isNotEmpty()) {
                 SectionHeader(
-                    title = "High Risk Apps (${state.highRiskApps.size})",
+                    title = "High Risk Apps (${state.highRiskApps.size}) · ${state.highRiskThreshold}+",
                     onViewAll = onViewAllClick
                 )
                 state.highRiskApps.take(3).forEach { app ->
+                    AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+            }
+
+            if (state.highBackgroundApps.isNotEmpty()) {
+                SectionHeader(title = "High Background Usage", onViewAll = onViewAllClick)
+                state.highBackgroundApps.forEach { app ->
                     AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
                 }
             }
@@ -290,6 +654,58 @@ fun DashboardScreen(
                 )
                 state.recentlyUpdatedApps.forEach { app ->
                     AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+            }
+
+            if (state.newlyInstalledApps.isNotEmpty()) {
+                SectionHeader(title = "Newly Installed (7d)", onViewAll = onViewAllClick)
+                state.newlyInstalledApps.forEach { app ->
+                    AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+            }
+
+            if (state.sensitivePermissionApps.isNotEmpty()) {
+                SectionHeader(title = "Camera / Mic / Location Apps", onViewAll = onViewAllClick)
+                state.sensitivePermissionApps.forEach { app ->
+                    AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+            }
+
+            if (state.sideloadedApps.isNotEmpty()) {
+                SectionHeader(title = "Sideloaded / Unknown Source Apps", onViewAll = onViewAllClick)
+                state.sideloadedApps.forEach { app ->
+                    AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+            }
+
+            if (state.dormantApps.isNotEmpty()) {
+                SectionHeader(title = "Dormant Apps (60+ Days Unused)", onViewAll = onViewAllClick)
+                state.dormantApps.forEach { app ->
+                    AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                }
+                if (state.dormantEventCount7d > 0) {
+                    Text(
+                        text = "${state.dormantEventCount7d} dormant-app alerts this week — review and uninstall unused apps.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+            }
+
+            if (state.topDataHoarders.isNotEmpty()) {
+                SectionHeader(title = "Top Data Collectors", onViewAll = onViewAllClick)
+                state.topDataHoarders.forEach { app ->
+                    val hoardScore = com.apptracker.util.PrivacyScoreUtils.dataHoardingScore(app.permissions)
+                    Column {
+                        AppSummaryRow(app = app, onClick = { onAppClick(app.packageName) })
+                        Text(
+                            text = "Data score: $hoardScore/100 \u2022 ${com.apptracker.util.PrivacyScoreUtils.dataHoardingLabel(hoardScore)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = com.apptracker.ui.components.riskColor(hoardScore),
+                            modifier = Modifier.padding(start = 12.dp, bottom = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -370,10 +786,11 @@ private fun SectionHeader(
 @Composable
 private fun AppSummaryRow(
     app: AppInfo,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Card(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(

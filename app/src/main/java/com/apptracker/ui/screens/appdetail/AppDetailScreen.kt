@@ -1,6 +1,9 @@
 package com.apptracker.ui.screens.appdetail
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.filled.BatteryAlert
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
@@ -62,6 +66,7 @@ import com.apptracker.data.model.AppInfo
 import com.apptracker.data.model.AppOpsEntry
 import com.apptracker.data.model.AppOpsMode
 import com.apptracker.data.db.entity.AppOpsHistoryEntity
+import com.apptracker.data.db.entity.TrustLabel
 import com.apptracker.data.model.BatteryUsageInfo
 import com.apptracker.data.model.NetworkUsageInfo
 import com.apptracker.data.model.PermissionDetail
@@ -72,6 +77,7 @@ import com.apptracker.domain.model.RiskScore
 import com.apptracker.domain.model.RiskSeverity
 import com.apptracker.ui.components.AppIcon
 import com.apptracker.ui.components.PermissionCard
+import com.apptracker.ui.components.RadarChart
 import com.apptracker.ui.components.RiskBadge
 import com.apptracker.ui.components.StatCard
 import com.apptracker.ui.components.UsageBarChart
@@ -154,6 +160,33 @@ fun AppDetailScreen(
                 ) {
                     Icon(Icons.Default.Share, contentDescription = "Share Report")
                 }
+                IconButton(
+                    onClick = {
+                        val permissionIntent: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            Intent("android.intent.action.MANAGE_APP_PERMISSIONS").apply {
+                                putExtra(Intent.EXTRA_PACKAGE_NAME, packageName)
+                            }
+                        } else {
+                            null
+                        }
+
+                        val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+
+                        runCatching {
+                            if (permissionIntent != null) {
+                                context.startActivity(permissionIntent)
+                            } else {
+                                context.startActivity(fallbackIntent)
+                            }
+                        }.onFailure {
+                            context.startActivity(fallbackIntent)
+                        }
+                    }
+                ) {
+                    Icon(Icons.Default.Security, contentDescription = "Permission Audit")
+                }
             }
         )
 
@@ -235,6 +268,33 @@ fun AppDetailScreen(
         // App header
         AppHeaderSection(app, state.riskScore)
 
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            )
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "App Trust Label",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(TrustLabel.TRUSTED, TrustLabel.SUSPICIOUS, TrustLabel.UNKNOWN).forEach { label ->
+                        FilterChip(
+                            selected = state.trustLabel == label,
+                            onClick = { viewModel.setTrustLabel(label) },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+        }
+
         if (state.onDeviceOnly) {
             Card(
                 modifier = Modifier
@@ -287,8 +347,31 @@ fun AppDetailScreen(
             DetailTab.APP_OPS -> AppOpsTab(app.appOpsEntries)
             DetailTab.BATTERY -> BatteryTab(app.batteryUsage, state.selectedRange, state.isBeginnerMode, state.batteryTrend)
             DetailTab.NETWORK -> NetworkTab(app.networkUsage, state.selectedRange, state.isBeginnerMode, state.networkTrend)
-            DetailTab.RISK -> RiskTab(state.riskScore, state.isBeginnerMode)
-            DetailTab.INFO -> AppInfoTab(app)
+            DetailTab.RISK -> RiskTab(
+                riskScore = state.riskScore,
+                isBeginnerMode = state.isBeginnerMode,
+                permissionCreepIndex = state.permissionCreepIndex,
+                dataHoardingScore = state.dataHoardingScore,
+                perAppRadarValues = state.perAppRadarValues,
+                threatSimulationItems = state.threatSimulationItems,
+                safeAlternatives = state.safeAlternatives
+            )
+            DetailTab.INFO -> AppInfoTab(
+                app = app,
+                sharedUidPeers = state.sharedUidPeers,
+                sdkFingerprints = state.sdkFingerprints,
+                certificatePinningInspection = state.certificatePinningInspection
+            )
+            DetailTab.INSPECTOR -> InspectorTab(
+                packageName = packageName,
+                exportedComponents = state.exportedComponents,
+                signerInfos = state.signerInfos,
+                apkDiffSummary = state.apkDiffSummary,
+                permissionDiffSummary = state.permissionDiffSummary,
+                permissionDiffTimeline = state.permissionDiffTimeline,
+                dataFlowSummary = state.dataFlowSummary
+            )
+            DetailTab.LOGCAT -> LogcatTab(state.logcatLines)
         }
     }
 
@@ -534,6 +617,7 @@ private fun AppOpsTab(ops: List<AppOpsEntry>) {
         return
     }
 
+    val clipboardOps = ops.filter { it.opName.contains("CLIPBOARD", ignoreCase = true) }
     val allowed = ops.filter { it.mode == AppOpsMode.ALLOWED || it.mode == AppOpsMode.FOREGROUND }
     val denied = ops.filter { it.mode == AppOpsMode.IGNORED || it.mode == AppOpsMode.ERRORED }
     val defaultOps = ops.filter { it.mode == AppOpsMode.DEFAULT || it.mode == AppOpsMode.UNKNOWN }
@@ -552,6 +636,22 @@ private fun AppOpsTab(ops: List<AppOpsEntry>) {
                 StatCard(title = "Total Ops", value = "${ops.size}", modifier = Modifier.weight(1f))
                 StatCard(title = "Allowed", value = "${allowed.size}", modifier = Modifier.weight(1f))
                 StatCard(title = "Denied", value = "${denied.size}", modifier = Modifier.weight(1f))
+            }
+        }
+
+        if (clipboardOps.isNotEmpty()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Text(
+                        text = "Clipboard access has been observed for this app. Review recent copied text exposure and confirm the app genuinely needs clipboard reads.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             }
         }
 
@@ -811,6 +911,61 @@ private fun NetworkTab(
             }
         }
 
+        item {
+            val total = network.totalBytes.coerceAtLeast(1L)
+            val bgPercent = ((network.backgroundBytes.toDouble() / total) * 100).toInt().coerceIn(0, 100)
+            val fgPercent = 100 - bgPercent
+            val monthlyMobileEstimateBytes = when (range.days) {
+                30 -> network.totalMobileBytes
+                else -> (network.totalMobileBytes.toDouble() / range.days * 30.0).toLong()
+            }
+            val assumedPricePerGb = 0.50 // local heuristic default
+            val estimatedMonthlyCost = (monthlyMobileEstimateBytes / 1_073_741_824.0) * assumedPricePerGb
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Foreground vs Background Split", style = MaterialTheme.typography.titleSmall)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        StatCard(
+                            title = "Foreground",
+                            value = "$fgPercent%",
+                            subtitle = NetworkUsageInfo.formatBytes(network.foregroundBytes),
+                            modifier = Modifier.weight(1f)
+                        )
+                        StatCard(
+                            title = "Background",
+                            value = "$bgPercent%",
+                            subtitle = NetworkUsageInfo.formatBytes(network.backgroundBytes),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (bgPercent >= 60) {
+                        WarningBanner("Most data is used in background — review background data permissions.")
+                    }
+                    DetailRow(
+                        "Estimated Monthly Mobile Cost",
+                        "$${"%.2f".format(estimatedMonthlyCost)} (at $$${"%.2f".format(assumedPricePerGb)}/GB)"
+                    )
+                    Text(
+                        text = "Local estimate from mobile usage in selected period.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
         if (trendData.isNotEmpty()) {
             item {
                 SectionLabel("Data Trend")
@@ -830,7 +985,15 @@ private fun NetworkTab(
 // ============ RISK TAB ============
 
 @Composable
-private fun RiskTab(riskScore: RiskScore?, isBeginnerMode: Boolean) {
+private fun RiskTab(
+    riskScore: RiskScore?,
+    isBeginnerMode: Boolean,
+    permissionCreepIndex: Int,
+    dataHoardingScore: Int = 0,
+    perAppRadarValues: List<Pair<String, Float>> = emptyList(),
+    threatSimulationItems: List<String> = emptyList(),
+    safeAlternatives: List<String> = emptyList()
+) {
     if (riskScore == null) {
         EmptyTabContent("Risk analysis unavailable")
         return
@@ -866,8 +1029,27 @@ private fun RiskTab(riskScore: RiskScore?, isBeginnerMode: Boolean) {
                         },
                         style = MaterialTheme.typography.bodySmall
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = plainEnglishRiskSummary(riskScore),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
+        }
+
+        item {
+            RadarChart(
+                values = if (perAppRadarValues.isNotEmpty()) perAppRadarValues else listOf(
+                    "Permission" to riskScore.permissionScore.toFloat(),
+                    "Behavior" to riskScore.behaviorScore.toFloat(),
+                    "Network" to riskScore.networkScore.toFloat(),
+                    "Battery" to riskScore.batteryScore.toFloat(),
+                    "Hoarding" to dataHoardingScore.toFloat()
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
         }
 
         item {
@@ -912,6 +1094,59 @@ private fun RiskTab(riskScore: RiskScore?, isBeginnerMode: Boolean) {
             }
         }
 
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Permission Creep Index", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "$permissionCreepIndex dangerous permission additions across update history on this device.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        item {
+            val hoardColor = riskColor(dataHoardingScore)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Data Hoarding Score", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "$dataHoardingScore / 100",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = hoardColor
+                        )
+                    }
+                    Text(
+                        text = com.apptracker.util.PrivacyScoreUtils.dataHoardingLabel(dataHoardingScore),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = hoardColor
+                    )
+                    Text(
+                        text = "Measures the combination of sensitive permissions held — higher means more data access potential.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
         if (!isBeginnerMode) {
             item {
                 Card(
@@ -926,6 +1161,51 @@ private fun RiskTab(riskScore: RiskScore?, isBeginnerMode: Boolean) {
                         DetailRow("Behavior", "Suspicious patterns and app-ops activity")
                         DetailRow("Network", "Background transfer and send/receive anomalies")
                         DetailRow("Battery", "High background usage and wake activity")
+                    }
+                }
+            }
+        }
+
+        if (threatSimulationItems.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Threat Simulation", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            text = "If this app turned malicious, it could:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        threatSimulationItems.forEach { item ->
+                            Text("• $item", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (safeAlternatives.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Safe Alternatives", style = MaterialTheme.typography.titleSmall)
+                        safeAlternatives.forEach { alt ->
+                            Text(
+                                text = "• Consider: $alt",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -1008,10 +1288,472 @@ private fun RiskFlagCard(flag: RiskFlag) {
     }
 }
 
+private fun plainEnglishRiskSummary(riskScore: RiskScore): String {
+    val highFlags = riskScore.flags.take(3).map { it.title.lowercase() }
+    val flagSummary = if (highFlags.isNotEmpty()) {
+        highFlags.joinToString(", ")
+    } else {
+        "no major risk flags"
+    }
+
+    return when {
+        riskScore.overallScore >= 75 ->
+            "High risk: this app shows $flagSummary and should be reviewed now."
+        riskScore.overallScore >= 50 ->
+            "Moderate risk: this app has $flagSummary; review permissions and background activity."
+        else ->
+            "Lower risk right now: $flagSummary, but keep monitoring after app updates."
+    }
+}
+
 // ============ APP INFO TAB ============
 
 @Composable
-private fun AppInfoTab(app: AppInfo) {
+private fun InspectorTab(
+    packageName: String,
+    exportedComponents: List<AppComponentInspection>,
+    signerInfos: List<ApkSignerInspection>,
+    apkDiffSummary: ApkDiffSummary?,
+    permissionDiffSummary: PermissionDiffSummary?,
+    permissionDiffTimeline: List<PermissionDiffTimelineEntry>,
+    dataFlowSummary: List<String>
+) {
+    val context = LocalContext.current
+    var showOpenOnly by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (dataFlowSummary.isNotEmpty()) {
+            item {
+                SectionLabel("Data Flow Diagram (Text)")
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        dataFlowSummary.forEach { line ->
+                            Text(text = line, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+        }
+
+        if (apkDiffSummary != null) {
+            item {
+                SectionLabel("APK Diff on Update")
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        DetailRow("Previous Version Code", "${apkDiffSummary.previousVersionCode}")
+                        DetailRow("Previous Snapshot", formatTimestamp(apkDiffSummary.previousCapturedAt))
+                        DetailRow("Previous APK Size", com.apptracker.data.model.NetworkUsageInfo.formatBytes(apkDiffSummary.previousSizeBytes))
+                        DetailRow("Current APK Size", com.apptracker.data.model.NetworkUsageInfo.formatBytes(apkDiffSummary.currentSizeBytes))
+                        DetailRow(
+                            "Size Delta",
+                            (if (apkDiffSummary.sizeDeltaBytes >= 0) "+" else "") +
+                                com.apptracker.data.model.NetworkUsageInfo.formatBytes(kotlin.math.abs(apkDiffSummary.sizeDeltaBytes))
+                        )
+                        DetailRow("Signer Changed", if (apkDiffSummary.signatureChanged) "Yes" else "No")
+                    }
+                }
+            }
+        }
+
+        if (permissionDiffSummary != null &&
+            (permissionDiffSummary.addedPermissions.isNotEmpty() || permissionDiffSummary.removedPermissions.isNotEmpty())
+        ) {
+            item {
+                SectionLabel("Permission Diff on Update")
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        DetailRow("Compared To Version", "${permissionDiffSummary.previousVersionCode}")
+                        DetailRow("Previous Snapshot", formatTimestamp(permissionDiffSummary.previousCapturedAt))
+                        if (permissionDiffSummary.addedPermissions.isNotEmpty()) {
+                            Text(
+                                text = "Added Dangerous Permissions",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            permissionDiffSummary.addedPermissions.take(8).forEach {
+                                Text("+ $it", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (permissionDiffSummary.removedPermissions.isNotEmpty()) {
+                            Text(
+                                text = "Removed Dangerous Permissions",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            permissionDiffSummary.removedPermissions.take(8).forEach {
+                                Text("- $it", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (permissionDiffTimeline.isNotEmpty()) {
+            item {
+                SectionLabel("Permission Change Timeline")
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        permissionDiffTimeline.forEach { entry ->
+                            Text(
+                                text = "v${entry.fromVersionCode} → v${entry.toVersionCode} • ${formatTimestamp(entry.capturedAt)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "+${entry.addedCount} added • -${entry.removedCount} removed",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (entry.addedPermissions.isNotEmpty()) {
+                                Text(
+                                    text = "Added: ${entry.addedPermissions.take(3).joinToString()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (entry.removedPermissions.isNotEmpty()) {
+                                Text(
+                                    text = "Removed: ${entry.removedPermissions.take(3).joinToString()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionLabel("Signature Viewer")
+            if (signerInfos.isEmpty()) {
+                Text(
+                    text = "No signer metadata available.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        items(signerInfos) { signer ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.18f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Chain Position", "${signer.chainPosition} / ${signer.chainSize}")
+                    DetailRow("SHA-256", signer.sha256)
+                    DetailRow("Subject", signer.subject)
+                    DetailRow("Issuer", signer.issuer)
+                    DetailRow("Signature Algorithm", signer.signatureAlgorithm)
+                    DetailRow("Public Key", "${signer.publicKeyAlgorithm} (${signer.publicKeyBits} bits)")
+                    DetailRow("Key Strength", signer.keyStrength)
+                    DetailRow("Valid From", signer.validFrom)
+                    DetailRow("Valid To", signer.validTo)
+                    DetailRow("Expiry Risk", signer.expiryRisk)
+                    DetailRow("Days Until Expiry", "${signer.daysUntilExpiry}")
+                }
+            }
+        }
+
+        item {
+            SectionLabel("Intent Inspector")
+            Text(
+                text = "Exported components can be reached by other apps or the system. Review exposed entry points and permissions guarding them.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (exportedComponents.isEmpty()) {
+            item {
+                Text(
+                    text = "No exported activities, services, receivers, or providers were detected.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            fun exposureWeight(component: AppComponentInspection): Int {
+                val base = when (component.kind) {
+                    "Provider" -> 14
+                    "Service" -> 12
+                    "Receiver" -> 10
+                    "Activity" -> 8
+                    else -> 6
+                }
+                return if (component.permission.isNullOrBlank()) base else (base / 2).coerceAtLeast(1)
+            }
+
+            val openComponents = exportedComponents.filter { it.permission.isNullOrBlank() }
+            val guardedComponents = exportedComponents.filter { !it.permission.isNullOrBlank() }
+            val sortedComponents = exportedComponents.sortedByDescending { exposureWeight(it) }
+            val visibleComponents = if (showOpenOnly) {
+                sortedComponents.filter { it.permission.isNullOrBlank() }
+            } else {
+                sortedComponents
+            }
+            val topActions = openComponents
+                .sortedByDescending { exposureWeight(it) + if (it.enabled) 2 else 0 }
+                .take(3)
+                .map { component ->
+                    val action = when (component.kind) {
+                        "Provider" -> "Restrict or remove exported provider access"
+                        "Service" -> "Disable unnecessary exported background service"
+                        "Receiver" -> "Harden receiver with explicit permission guard"
+                        "Activity" -> "Limit exported activity entry points"
+                        else -> "Review exported component exposure"
+                    }
+                    "${component.kind}: $action (${component.name.substringAfterLast('.')})"
+                }
+            val weightedRiskScore = (
+                openComponents.count { it.kind == "Activity" } * 8 +
+                    openComponents.count { it.kind == "Service" } * 12 +
+                    openComponents.count { it.kind == "Receiver" } * 10 +
+                    openComponents.count { it.kind == "Provider" } * 14 +
+                    guardedComponents.count { it.kind == "Provider" } * 4 +
+                    guardedComponents.count { it.kind == "Service" } * 3
+                ).coerceIn(0, 100)
+
+            val severityLabel = when {
+                weightedRiskScore >= 70 -> "High"
+                weightedRiskScore >= 40 -> "Medium"
+                else -> "Low"
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    StatCard(
+                        title = "Exported",
+                        value = "${exportedComponents.size}",
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        title = "Guarded",
+                        value = "${exportedComponents.count { !it.permission.isNullOrBlank() }}",
+                        modifier = Modifier.weight(1f)
+                    )
+                    StatCard(
+                        title = "Open",
+                        value = "${exportedComponents.count { it.permission.isNullOrBlank() }}",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Exposure Severity: $severityLabel ($weightedRiskScore/100)",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Prioritize reviewing ${openComponents.size} open exported components first, then validate permission guards on ${guardedComponents.size} guarded components.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (topActions.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.22f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Top 3 Actions Now",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            topActions.forEach { action ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "• $action",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    androidx.compose.material3.TextButton(
+                                        onClick = {
+                                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.parse("package:$packageName")
+                                            }
+                                            context.startActivity(intent)
+                                        }
+                                    ) {
+                                        Text("Open")
+                                    }
+                                    androidx.compose.material3.TextButton(
+                                        onClick = {
+                                            val permissionIntent: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                                Intent("android.intent.action.MANAGE_APP_PERMISSIONS").apply {
+                                                    putExtra(Intent.EXTRA_PACKAGE_NAME, packageName)
+                                                }
+                                            } else {
+                                                null
+                                            }
+                                            val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                                data = Uri.parse("package:$packageName")
+                                            }
+                                            runCatching {
+                                                if (permissionIntent != null) {
+                                                    context.startActivity(permissionIntent)
+                                                } else {
+                                                    context.startActivity(fallbackIntent)
+                                                }
+                                            }.onFailure {
+                                                context.startActivity(fallbackIntent)
+                                            }
+                                        }
+                                    ) {
+                                        Text("Permissions")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = showOpenOnly,
+                        onClick = { showOpenOnly = !showOpenOnly },
+                        label = { Text("Open only") }
+                    )
+                    Text(
+                        text = if (showOpenOnly) "Showing highest-risk open components" else "Showing all components (ranked by risk)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            items(visibleComponents) { component ->
+                val componentRisk = (exposureWeight(component) * 7 + if (component.enabled) 5 else 0).coerceIn(0, 100)
+                val exposureLabel = if (component.permission.isNullOrBlank()) "Open" else "Guarded"
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                component.name,
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "$componentRisk/100",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = riskColor(componentRisk),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            text = "$exposureLabel exposure",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (exposureLabel == "Open") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                        DetailRow("Type", component.kind)
+                        DetailRow("Enabled", if (component.enabled) "Yes" else "No")
+                        DetailRow("Permission Guard", component.permission ?: "None")
+                    }
+                }
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(32.dp)) }
+    }
+}
+
+@Composable
+private fun LogcatTab(logLines: List<String>) {
+    if (logLines.isEmpty()) {
+        EmptyTabContent("No logcat entries", "Logs may be unavailable on this Android version/profile")
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        items(logLines) { line ->
+            Text(
+                text = line,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        item { Spacer(modifier = Modifier.height(24.dp)) }
+    }
+}
+
+@Composable
+private fun AppInfoTab(
+    app: AppInfo,
+    sharedUidPeers: List<AppInfo>,
+    sdkFingerprints: List<String>,
+    certificatePinningInspection: com.apptracker.util.CertificatePinningInspection?
+) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -1025,8 +1767,94 @@ private fun AppInfoTab(app: AppInfo) {
             DetailRow("Version Code", "${app.versionCode}")
             DetailRow("Target SDK", "${app.targetSdkVersion}")
             DetailRow("Min SDK", "${app.minSdkVersion}")
+            DetailRow("Install Source", app.installSourceLabel)
+            DetailRow("Sideloaded", if (app.isSideloaded) "Yes" else "No")
+            DetailRow("Linux UID", if (app.linuxUid >= 0) "${app.linuxUid}" else "Unknown")
+            DetailRow("Shared UID Peers", "${sharedUidPeers.size}")
             DetailRow("System App", if (app.isSystemApp) "Yes" else "No")
             DetailRow("Enabled", if (app.isEnabled) "Yes" else "No")
+        }
+
+        if (sharedUidPeers.isNotEmpty()) {
+            item {
+                SectionLabel("Shared UID Group")
+                Text(
+                    text = "Apps sharing this UID may exchange data more directly within the same Linux sandbox.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(sharedUidPeers) { peer ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(peer.appName, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            peer.packageName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionLabel("SDK Fingerprint (Heuristic)")
+            if (sdkFingerprints.isEmpty()) {
+                Text(
+                    text = "No known analytics/ads SDK markers detected in quick local scan.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    sdkFingerprints.forEach { marker ->
+                        Text("• $marker", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+
+        item {
+            SectionLabel("Certificate Pinning (Quick APK Scan)")
+            val inspection = certificatePinningInspection
+            if (inspection == null) {
+                Text(
+                    text = "Certificate pinning scan not available.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = when (inspection.status) {
+                            com.apptracker.util.CertificatePinningStatus.LIKELY_PRESENT -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                            com.apptracker.util.CertificatePinningStatus.CONFIG_PRESENT -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                            com.apptracker.util.CertificatePinningStatus.NO_EVIDENCE -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f)
+                            com.apptracker.util.CertificatePinningStatus.UNAVAILABLE -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                        }
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = inspection.summary,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (inspection.evidence.isNotEmpty()) {
+                            inspection.evidence.forEach { evidence ->
+                                Text("• $evidence", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -1138,6 +1966,8 @@ private fun tabIcon(tab: DetailTab): ImageVector = when (tab) {
     DetailTab.NETWORK -> Icons.Default.NetworkCheck
     DetailTab.RISK -> Icons.Default.Shield
     DetailTab.INFO -> Icons.Default.Info
+    DetailTab.INSPECTOR -> Icons.Default.Search
+    DetailTab.LOGCAT -> Icons.Default.Timeline
 }
 
 private fun formatTimestamp(timestamp: Long): String {

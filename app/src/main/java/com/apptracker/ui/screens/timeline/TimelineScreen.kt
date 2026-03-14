@@ -44,12 +44,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.apptracker.data.db.entity.AppOpsHistoryEntity
 import com.apptracker.data.model.UsageTimeRange
 import com.apptracker.ui.theme.CategoryColors
+import com.apptracker.ui.theme.DefaultMode
+import com.apptracker.ui.theme.Denied
+import com.apptracker.ui.theme.Granted
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,7 +70,6 @@ fun TimelineScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(title = { Text("Activity Timeline") })
 
-        // Filter chips
         LazyRow(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -108,6 +110,46 @@ fun TimelineScreen(
             }
         }
 
+        if (!state.isLoading) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Replay Summary",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ReplayStat("Entries", "${state.totalEntries}", Modifier.weight(1f))
+                        ReplayStat("Apps", "${state.uniqueApps}", Modifier.weight(1f))
+                        ReplayStat(
+                            "Last Activity",
+                            if (state.lastActivityTimestamp > 0) formatShortTimestamp(state.lastActivityTimestamp) else "N/A",
+                            Modifier.weight(1f)
+                        )
+                    }
+                    if (state.topPackages.isNotEmpty()) {
+                        Text(
+                            text = state.topPackages.joinToString(" • ") { "${it.packageLabel} ${it.count}x" },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
         when {
             state.isLoading -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -137,10 +179,12 @@ fun TimelineScreen(
                         .padding(horizontal = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    items(state.filteredEntries) { entry ->
+                    items(state.filteredEntries, key = { it.id }) { entry ->
                         TimelineEntry(
                             entry = entry,
-                            onClick = { onAppClick(entry.packageName) }
+                            onClick = {
+                                entry.packageName?.takeIf { it.isNotBlank() }?.let(onAppClick)
+                            }
                         )
                     }
                     item { Spacer(modifier = Modifier.height(16.dp)) }
@@ -183,17 +227,29 @@ fun TimelineScreen(
 }
 
 @Composable
+private fun ReplayStat(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier) {
+        Text(value, style = MaterialTheme.typography.titleMedium)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
 private fun TimelineEntry(
-    entry: AppOpsHistoryEntity,
+    entry: TimelineItemUi,
     onClick: () -> Unit
 ) {
+    val isClickable = !entry.packageName.isNullOrBlank()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.Top
     ) {
-        // Timeline dot and line
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.width(32.dp)
@@ -202,7 +258,7 @@ private fun TimelineEntry(
                 modifier = Modifier
                     .size(12.dp)
                     .clip(CircleShape)
-                    .background(getOpColor(entry.opName))
+                    .background(getTimelineColor(entry))
             )
             Box(
                 modifier = Modifier
@@ -217,7 +273,7 @@ private fun TimelineEntry(
         Card(
             modifier = Modifier
                 .weight(1f)
-                .clickable(onClick = onClick),
+                .then(if (isClickable) Modifier.clickable(onClick = onClick) else Modifier),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
             )
@@ -228,20 +284,16 @@ private fun TimelineEntry(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = entry.packageName.substringAfterLast("."),
+                        text = entry.title,
                         style = MaterialTheme.typography.titleSmall
                     )
                     Text(
-                        text = entry.mode,
+                        text = entry.badge,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (entry.mode == "ALLOWED")
-                            com.apptracker.ui.theme.Granted
-                        else com.apptracker.ui.theme.Denied,
+                        color = badgeColor(entry),
                         modifier = Modifier
                             .background(
-                                (if (entry.mode == "ALLOWED")
-                                    com.apptracker.ui.theme.Granted
-                                else com.apptracker.ui.theme.Denied).copy(alpha = 0.1f),
+                                badgeColor(entry).copy(alpha = 0.1f),
                                 RoundedCornerShape(4.dp)
                             )
                             .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -249,14 +301,14 @@ private fun TimelineEntry(
                 }
 
                 Text(
-                    text = entry.opName.removePrefix("android:"),
+                    text = entry.detail,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (entry.lastAccessTime > 0) {
+                if (entry.timestamp > 0) {
                     Text(
-                        text = formatTimestamp(entry.lastAccessTime),
+                        text = formatTimestamp(entry.timestamp),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
@@ -273,20 +325,41 @@ private fun filterIcon(filter: TimelineFilter): ImageVector = when (filter) {
     TimelineFilter.MICROPHONE -> Icons.Default.Mic
     TimelineFilter.CONTACTS -> Icons.Default.Contacts
     TimelineFilter.STORAGE -> Icons.Default.FolderOpen
+    TimelineFilter.SECURITY -> Icons.Default.MoreHoriz
+    TimelineFilter.FILES -> Icons.Default.FolderOpen
 }
 
-private fun getOpColor(opName: String) = when {
-    opName.contains("LOCATION", ignoreCase = true) -> CategoryColors[0]
-    opName.contains("CAMERA", ignoreCase = true) -> CategoryColors[1]
-    opName.contains("AUDIO", ignoreCase = true) ||
-            opName.contains("RECORD", ignoreCase = true) -> CategoryColors[2]
-    opName.contains("CONTACT", ignoreCase = true) -> CategoryColors[3]
-    opName.contains("STORAGE", ignoreCase = true) -> CategoryColors[4]
-    else -> CategoryColors[8]
+private fun getTimelineColor(entry: TimelineItemUi): Color = when (entry.kind) {
+    TimelineItemKind.APP_OPS -> when {
+        entry.detail.contains("LOCATION", ignoreCase = true) -> CategoryColors[0]
+        entry.detail.contains("CAMERA", ignoreCase = true) -> CategoryColors[1]
+        entry.detail.contains("AUDIO", ignoreCase = true) ||
+            entry.detail.contains("RECORD", ignoreCase = true) -> CategoryColors[2]
+        entry.detail.contains("CONTACT", ignoreCase = true) -> CategoryColors[3]
+        entry.detail.contains("STORAGE", ignoreCase = true) ||
+            entry.detail.contains("EXTERNAL", ignoreCase = true) -> CategoryColors[4]
+        else -> CategoryColors[8]
+    }
+    TimelineItemKind.SECURITY -> Denied
+    TimelineItemKind.FILES -> CategoryColors[5]
+}
+
+private fun badgeColor(entry: TimelineItemUi): Color = when {
+    entry.kind == TimelineItemKind.APP_OPS && entry.badge.equals("ALLOWED", ignoreCase = true) -> Granted
+    entry.kind == TimelineItemKind.APP_OPS && entry.badge.equals("IGNORED", ignoreCase = true) -> DefaultMode
+    entry.kind == TimelineItemKind.APP_OPS -> Denied
+    entry.kind == TimelineItemKind.FILES -> CategoryColors[5]
+    else -> Denied
 }
 
 private fun formatTimestamp(timestamp: Long): String {
     if (timestamp <= 0) return ""
     val sdf = SimpleDateFormat("MMM dd, HH:mm:ss", Locale.getDefault())
+    return sdf.format(Date(timestamp))
+}
+
+private fun formatShortTimestamp(timestamp: Long): String {
+    if (timestamp <= 0) return ""
+    val sdf = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
 }

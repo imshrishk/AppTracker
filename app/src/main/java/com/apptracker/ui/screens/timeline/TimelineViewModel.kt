@@ -1,79 +1,126 @@
 package com.apptracker.ui.screens.timeline
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.apptracker.data.db.dao.AppOpsDao
+import com.apptracker.data.db.dao.SecurityEventDao
 import com.apptracker.data.db.entity.AppOpsHistoryEntity
+import com.apptracker.data.db.entity.SecurityEventEntity
+import com.apptracker.data.db.entity.SecurityEventType
 import com.apptracker.data.model.UsageTimeRange
+import com.apptracker.util.OnboardingPreferences
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class TimelineViewModel @Inject constructor(
-    private val appOpsDao: AppOpsDao
+    private val appOpsDao: AppOpsDao,
+    private val securityEventDao: SecurityEventDao,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(TimelineUiState())
     val uiState: StateFlow<TimelineUiState> = _uiState.asStateFlow()
 
-    init {
-        loadTimeline()
-    }
+    private val selectedFilter = MutableStateFlow(TimelineFilter.ALL)
+    private val selectedPeriod = MutableStateFlow(UsageTimeRange.LAST_24_HOURS)
+    private val customPeriodDays = MutableStateFlow<Int?>(null)
 
-    fun loadTimeline() {
+    init {
+        observeDefaultRange()
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            try {
-                val since = computeSince(
-                    _uiState.value.selectedPeriod,
-                    _uiState.value.customPeriodDays
+            combine(selectedFilter, selectedPeriod, customPeriodDays) { filter, period, customDays ->
+                Triple(filter, period, customDays)
+            }.flatMapLatest { (filter, period, customDays) ->
+                _uiState.value = _uiState.value.copy(
+                    isLoading = true,
+                    error = null,
+                    selectedFilter = filter,
+                    selectedPeriod = period,
+                    customPeriodDays = customDays
                 )
-                appOpsDao.getOpsSince(since).collectLatest { ops ->
-                    _uiState.value = TimelineUiState(
-                        isLoading = false,
-                        entries = ops,
-                        filteredEntries = filterEntries(ops, _uiState.value.selectedFilter),
-                        selectedFilter = _uiState.value.selectedFilter,
-                        selectedPeriod = _uiState.value.selectedPeriod,
-                        customPeriodDays = _uiState.value.customPeriodDays
-                    )
+                val since = computeSince(period, customDays)
+                combine(
+                    appOpsDao.getOpsSince(since),
+                    securityEventDao.getRecentEvents(since)
+                ) { ops, events ->
+                    buildState(filter, period, customDays, ops, events)
                 }
-            } catch (e: Exception) {
-                _uiState.value = TimelineUiState(
-                    isLoading = false,
-                    error = e.message,
-                    selectedFilter = _uiState.value.selectedFilter,
-                    selectedPeriod = _uiState.value.selectedPeriod,
-                    customPeriodDays = _uiState.value.customPeriodDays
-                )
+            }.collect { state ->
+                _uiState.value = state
             }
         }
     }
 
+    private fun observeDefaultRange() {
+        viewModelScope.launch {
+            OnboardingPreferences.defaultUsageRange(context).collectLatest { range ->
+                if (customPeriodDays.value != null || selectedPeriod.value == range) return@collectLatest
+                selectedPeriod.value = range
+            }
+        }
+    }
+
+    fun loadTimeline() {
+        _uiState.value = _uiState.value.copy(isLoading = true)
+    }
+
     fun onFilterChange(filter: TimelineFilter) {
-        _uiState.value = _uiState.value.copy(
-            selectedFilter = filter,
-            filteredEntries = filterEntries(_uiState.value.entries, filter)
-        )
+        selectedFilter.value = filter
     }
 
     fun onPeriodChange(period: UsageTimeRange) {
-        _uiState.value = _uiState.value.copy(
-            selectedPeriod = period,
-            customPeriodDays = null
-        )
-        loadTimeline()
+        selectedPeriod.value = period
+        customPeriodDays.value = null
+        viewModelScope.launch {
+            OnboardingPreferences.setDefaultUsageRange(context, period)
+        }
     }
 
     fun onCustomPeriodDays(days: Int) {
         if (days <= 0) return
-        _uiState.value = _uiState.value.copy(customPeriodDays = days)
-        loadTimeline()
+        customPeriodDays.value = days
+    }
+
+    private fun buildState(
+        filter: TimelineFilter,
+        period: UsageTimeRange,
+        customDays: Int?,
+        ops: List<AppOpsHistoryEntity>,
+        events: List<SecurityEventEntity>
+    ): TimelineUiState {
+        val combined = buildTimelineItems(ops, events)
+        val filtered = filterEntries(combined, filter)
+        return TimelineUiState(
+            isLoading = false,
+            entries = combined,
+            filteredEntries = filtered,
+            selectedFilter = filter,
+            selectedPeriod = period,
+            customPeriodDays = customDays,
+            totalEntries = filtered.size,
+            uniqueApps = filtered.mapNotNull { it.packageName }.distinct().size,
+            topPackages = filtered
+                .map { it.packageName?.substringAfterLast('.') ?: "device" }
+                .groupingBy { it }
+                .eachCount()
+                .entries
+                .sortedByDescending { it.value }
+                .take(3)
+                .map { TimelinePackageSummary(it.key, it.value) },
+            lastActivityTimestamp = filtered.maxOfOrNull { it.timestamp } ?: 0L
+        )
     }
 
     private fun computeSince(period: UsageTimeRange, customDays: Int?): Long {
@@ -81,29 +128,71 @@ class TimelineViewModel @Inject constructor(
         return System.currentTimeMillis() - days * 24L * 60L * 60L * 1000L
     }
 
+    private fun buildTimelineItems(
+        ops: List<AppOpsHistoryEntity>,
+        events: List<SecurityEventEntity>
+    ): List<TimelineItemUi> {
+        val opItems = ops.map { op ->
+            TimelineItemUi(
+                id = "op-${op.id}",
+                packageName = op.packageName,
+                title = op.packageName.substringAfterLast('.'),
+                detail = op.opName.removePrefix("android:"),
+                timestamp = maxOf(op.lastAccessTime, op.timestamp),
+                badge = op.mode,
+                kind = TimelineItemKind.APP_OPS
+            )
+        }
+        val eventItems = events.map { event ->
+            TimelineItemUi(
+                id = "event-${event.id}",
+                packageName = event.packageName.takeIf { it.isNotBlank() },
+                title = event.title,
+                detail = event.detail,
+                timestamp = event.timestamp,
+                badge = event.type.replace('_', ' '),
+                kind = when (event.type) {
+                    SecurityEventType.SENSITIVE_FILE_DETECTED,
+                    SecurityEventType.DUPLICATE_FILES_DETECTED,
+                    SecurityEventType.SECURE_DELETE,
+                    SecurityEventType.FILE_ACCESS_AUDIT -> TimelineItemKind.FILES
+                    SecurityEventType.DNS_LEAK -> TimelineItemKind.SECURITY
+                    else -> TimelineItemKind.SECURITY
+                }
+            )
+        }
+        return (opItems + eventItems).sortedByDescending { it.timestamp }
+    }
+
     private fun filterEntries(
-        entries: List<AppOpsHistoryEntity>,
+        entries: List<TimelineItemUi>,
         filter: TimelineFilter
-    ): List<AppOpsHistoryEntity> {
+    ): List<TimelineItemUi> {
         return when (filter) {
             TimelineFilter.ALL -> entries
             TimelineFilter.LOCATION -> entries.filter {
-                it.opName.contains("LOCATION", ignoreCase = true)
+                it.kind == TimelineItemKind.APP_OPS && it.detail.contains("LOCATION", ignoreCase = true)
             }
             TimelineFilter.CAMERA -> entries.filter {
-                it.opName.contains("CAMERA", ignoreCase = true)
+                it.kind == TimelineItemKind.APP_OPS && it.detail.contains("CAMERA", ignoreCase = true)
             }
             TimelineFilter.MICROPHONE -> entries.filter {
-                it.opName.contains("AUDIO", ignoreCase = true) ||
-                        it.opName.contains("RECORD", ignoreCase = true)
+                it.kind == TimelineItemKind.APP_OPS && (
+                    it.detail.contains("AUDIO", ignoreCase = true) ||
+                        it.detail.contains("RECORD", ignoreCase = true)
+                    )
             }
             TimelineFilter.CONTACTS -> entries.filter {
-                it.opName.contains("CONTACT", ignoreCase = true)
+                it.kind == TimelineItemKind.APP_OPS && it.detail.contains("CONTACT", ignoreCase = true)
             }
             TimelineFilter.STORAGE -> entries.filter {
-                it.opName.contains("STORAGE", ignoreCase = true) ||
-                        it.opName.contains("EXTERNAL", ignoreCase = true)
+                it.kind == TimelineItemKind.APP_OPS && (
+                    it.detail.contains("STORAGE", ignoreCase = true) ||
+                        it.detail.contains("EXTERNAL", ignoreCase = true)
+                    )
             }
+            TimelineFilter.SECURITY -> entries.filter { it.kind == TimelineItemKind.SECURITY }
+            TimelineFilter.FILES -> entries.filter { it.kind == TimelineItemKind.FILES }
         }
     }
 }
@@ -111,12 +200,37 @@ class TimelineViewModel @Inject constructor(
 data class TimelineUiState(
     val isLoading: Boolean = true,
     val error: String? = null,
-    val entries: List<AppOpsHistoryEntity> = emptyList(),
-    val filteredEntries: List<AppOpsHistoryEntity> = emptyList(),
+    val entries: List<TimelineItemUi> = emptyList(),
+    val filteredEntries: List<TimelineItemUi> = emptyList(),
     val selectedFilter: TimelineFilter = TimelineFilter.ALL,
     val selectedPeriod: UsageTimeRange = UsageTimeRange.LAST_24_HOURS,
-    val customPeriodDays: Int? = null
+    val customPeriodDays: Int? = null,
+    val totalEntries: Int = 0,
+    val uniqueApps: Int = 0,
+    val topPackages: List<TimelinePackageSummary> = emptyList(),
+    val lastActivityTimestamp: Long = 0L
 )
+
+data class TimelinePackageSummary(
+    val packageLabel: String,
+    val count: Int
+)
+
+data class TimelineItemUi(
+    val id: String,
+    val packageName: String?,
+    val title: String,
+    val detail: String,
+    val timestamp: Long,
+    val badge: String,
+    val kind: TimelineItemKind
+)
+
+enum class TimelineItemKind {
+    APP_OPS,
+    SECURITY,
+    FILES
+}
 
 enum class TimelineFilter(val label: String) {
     ALL("All"),
@@ -124,5 +238,7 @@ enum class TimelineFilter(val label: String) {
     CAMERA("Camera"),
     MICROPHONE("Microphone"),
     CONTACTS("Contacts"),
-    STORAGE("Storage")
+    STORAGE("Storage"),
+    SECURITY("Security"),
+    FILES("Files")
 }

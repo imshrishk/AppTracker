@@ -25,4 +25,7 @@ interface WatchedAppDao {
 
     @Query("SELECT COUNT(*) FROM watched_apps")
     suspend fun getWatchCount(): Int
+
+    @Query("SELECT * FROM watched_apps")
+    suspend fun getWatchedList(): List<WatchedAppEntity>
 }

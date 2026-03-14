@@ -20,8 +20,13 @@ import com.apptracker.ui.screens.appcompare.AppCompareScreen
 import com.apptracker.ui.screens.appdetail.AppDetailScreen
 import com.apptracker.ui.screens.applist.AppListScreen
 import com.apptracker.ui.screens.dashboard.DashboardScreen
+import com.apptracker.ui.screens.filemanager.FileManagerScreen
+import com.apptracker.ui.screens.remediation.RemediationScreen
 import com.apptracker.ui.screens.settings.SettingsScreen
 import com.apptracker.ui.screens.timeline.TimelineScreen
+import com.apptracker.ui.screens.dnsactivity.DnsActivityScreen
+import com.apptracker.ui.screens.globalsearch.GlobalSearchScreen
+import com.apptracker.ui.screens.networkmap.AppNetworkMapScreen
 
 @Composable
 fun AppNavigation() {
@@ -42,7 +47,13 @@ fun AppNavigation() {
                     },
                     onViewAllClick = {
                         navController.navigate(Screen.AppList.route)
-                    }
+                    },
+                    onOpenRemediation = {
+                        navController.navigate(Screen.Remediation.route)
+                        },
+                        onOpenDnsActivity = {
+                            navController.navigate(Screen.DnsActivity.route)
+                        }
                 )
             }
 
@@ -52,6 +63,10 @@ fun AppNavigation() {
                         navController.navigate(Screen.AppDetail.createRoute(packageName))
                     }
                 )
+            }
+
+            composable(Screen.FileManager.route) {
+                FileManagerScreen()
             }
 
             composable(
@@ -91,6 +106,33 @@ fun AppNavigation() {
             composable(Screen.Settings.route) {
                 SettingsScreen()
             }
+
+            composable(Screen.Remediation.route) {
+                RemediationScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenApp = { packageName ->
+                        navController.navigate(Screen.AppDetail.createRoute(packageName))
+                    }
+                )
+            }
+
+                composable(Screen.DnsActivity.route) {
+                    DnsActivityScreen(onBack = { navController.popBackStack() })
+                }
+
+            composable(Screen.GlobalSearch.route) {
+                GlobalSearchScreen(
+                    onAppClick = { pkg -> navController.navigate(Screen.AppDetail.createRoute(pkg)) },
+                    onBack = { navController.popBackStack() }
+                )
+            }
+
+            composable(Screen.NetworkMap.route) {
+                AppNetworkMapScreen(
+                    onBack = { navController.popBackStack() },
+                    onAppClick = { pkg -> navController.navigate(Screen.AppDetail.createRoute(pkg)) }
+                )
+            }
         }
     }
 }
@@ -103,6 +145,10 @@ private fun BottomNavigationBar(navController: NavHostController) {
     // Hide bottom bar on detail screens
     if (currentRoute?.startsWith("app_detail") == true) return
     if (currentRoute?.startsWith("app_compare") == true) return
+    if (currentRoute?.startsWith("remediation") == true) return
+    if (currentRoute?.startsWith("dns_activity") == true) return
+    if (currentRoute?.startsWith("global_search") == true) return
+    if (currentRoute?.startsWith("network_map") == true) return
 
     NavigationBar {
         bottomNavItems.forEach { screen ->

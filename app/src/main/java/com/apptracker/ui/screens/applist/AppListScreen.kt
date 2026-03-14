@@ -33,8 +33,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SearchBar
 import androidx.compose.material3.SearchBarDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -44,6 +47,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,11 +56,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.apptracker.data.model.AppInfo
 import com.apptracker.data.model.AppCategory
+import com.apptracker.data.db.entity.TrustLabel
 import com.apptracker.ui.components.AppActionsBottomSheet
 import com.apptracker.ui.components.AppIcon
 import com.apptracker.ui.components.RiskBadge
 import com.apptracker.ui.components.RiskScoreIndicator
 import com.apptracker.ui.components.riskLevelFromScore
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,10 +71,22 @@ fun AppListScreen(
     viewModel: AppListViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val quickSearchKeywords = listOf(
+        "high",
+        "critical",
+        "sideload",
+        "trusted",
+        "suspicious",
+        "camera",
+        "microphone",
+        "location"
+    )
     var showSortMenu by remember { mutableStateOf(false) }
     var selectedApp by remember { mutableStateOf<AppInfo?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) isRefreshing = false
@@ -130,7 +148,7 @@ fun AppListScreen(
                     onSearch = { },
                     expanded = false,
                     onExpandedChange = { },
-                    placeholder = { Text("Search apps...") },
+                    placeholder = { Text("Search apps, permissions, trust labels...") },
                     leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") }
                 )
             },
@@ -140,6 +158,89 @@ fun AppListScreen(
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp)
         ) { }
+
+        if (!state.rememberSearchFilters) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Search filter memory is off. Filters reset after closing the app.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = {
+                        viewModel.setSearchFilterMemoryEnabled(true)
+                        scope.launch { snackbarHostState.showSnackbar("Search memory enabled") }
+                    }) {
+                        Text("Enable memory")
+                    }
+                }
+            }
+        }
+
+        LazyRow(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(quickSearchKeywords) { keyword ->
+                val selected = queryTokens(state.searchQuery).contains(keyword)
+                FilterChip(
+                    selected = selected,
+                    onClick = {
+                        viewModel.onSearchQueryChange(toggleQueryToken(state.searchQuery, keyword, selected))
+                    },
+                    label = { Text(keyword.replaceFirstChar { it.uppercase() }) }
+                )
+            }
+        }
+
+        val activeTokens = queryTokens(state.searchQuery)
+        if (activeTokens.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Active filters: ${activeTokens.joinToString(" • ")}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { viewModel.onSearchQueryChange("") }) {
+                    Text("Clear all")
+                }
+            }
+            LazyRow(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(activeTokens.toList()) { token ->
+                    FilterChip(
+                        selected = true,
+                        onClick = {
+                            viewModel.onSearchQueryChange(toggleQueryToken(state.searchQuery, token, true))
+                        },
+                        label = { Text("$token ×") }
+                    )
+                }
+            }
+        }
 
         if (state.isBeginnerMode) {
             Card(
@@ -151,7 +252,7 @@ fun AppListScreen(
                 )
             ) {
                 Text(
-                    text = "Beginner Tip: Start with 'High Risk' filter. " +
+                    text = "Beginner Tip: Start with 'High Risk' filter (${state.highRiskThreshold}+). " +
                             "Risk score combines permissions, app behavior, battery, and network signals.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(12.dp)
@@ -200,8 +301,13 @@ fun AppListScreen(
         }
 
         // App count
+        val resultTokenCount = queryTokens(state.searchQuery).size
         Text(
-            text = "${state.filteredApps.size} apps",
+            text = if (resultTokenCount > 0) {
+                "${state.filteredApps.size} apps · $resultTokenCount active filter${if (resultTokenCount == 1) "" else "s"}"
+            } else {
+                "${state.filteredApps.size} apps"
+            },
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -259,6 +365,7 @@ fun AppListScreen(
                         ) { app ->
                             AppListItem(
                                 app = app,
+                                trustLabel = state.trustLabels[app.packageName] ?: TrustLabel.UNKNOWN,
                                 onClick = { onAppClick(app.packageName) },
                                 onLongClick = { selectedApp = app }
                             )
@@ -268,6 +375,8 @@ fun AppListScreen(
                 }
             }
         }
+
+        SnackbarHost(hostState = snackbarHostState)
     }
 
     // Bottom sheet for quick actions
@@ -287,10 +396,26 @@ fun AppListScreen(
     }
 }
 
+private fun queryTokens(query: String): Set<String> {
+    return query
+        .lowercase()
+        .split(Regex("[\\s,]+"))
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .toSet()
+}
+
+private fun toggleQueryToken(query: String, token: String, isSelected: Boolean): String {
+    val mutable = queryTokens(query).toMutableSet()
+    if (isSelected) mutable.remove(token) else mutable.add(token)
+    return mutable.joinToString(" ")
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AppListItem(
     app: AppInfo,
+    trustLabel: String,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -352,6 +477,16 @@ private fun AppListItem(
                         text = app.category.label,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Text(
+                        text = trustLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = when (trustLabel) {
+                            TrustLabel.TRUSTED -> MaterialTheme.colorScheme.primary
+                            TrustLabel.SUSPICIOUS -> MaterialTheme.colorScheme.error
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
                     )
                 }
             }

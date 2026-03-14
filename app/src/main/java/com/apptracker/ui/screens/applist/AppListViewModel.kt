@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.apptracker.data.db.dao.WatchedAppDao
+import com.apptracker.data.db.dao.AppTrustLabelDao
 import com.apptracker.data.db.entity.WatchedAppEntity
 import com.apptracker.data.model.AppInfo
 import com.apptracker.data.model.AppCategory
@@ -24,11 +25,13 @@ import javax.inject.Inject
 class AppListViewModel @Inject constructor(
     private val getInstalledApps: GetInstalledAppsUseCase,
     private val watchedAppDao: WatchedAppDao,
+    private val appTrustLabelDao: AppTrustLabelDao,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AppListUiState())
     val uiState: StateFlow<AppListUiState> = _uiState.asStateFlow()
+    private var persistSearchQueries: Boolean = true
 
     init {
         observePreferences()
@@ -39,6 +42,46 @@ class AppListViewModel @Inject constructor(
         viewModelScope.launch {
             OnboardingPreferences.beginnerMode(context).collectLatest { enabled ->
                 _uiState.value = _uiState.value.copy(isBeginnerMode = enabled)
+            }
+        }
+        viewModelScope.launch {
+            OnboardingPreferences.highRiskThreshold(context).collectLatest { threshold ->
+                _uiState.value = _uiState.value.copy(highRiskThreshold = threshold)
+                _uiState.value = _uiState.value.copy(
+                    filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
+                )
+            }
+        }
+        viewModelScope.launch {
+            appTrustLabelDao.getAll().collectLatest { labels ->
+                _uiState.value = _uiState.value.copy(
+                    trustLabels = labels.associate { it.packageName to it.label }
+                )
+                _uiState.value = _uiState.value.copy(
+                    filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
+                )
+            }
+        }
+        viewModelScope.launch {
+            OnboardingPreferences.searchQueryPersistence(context).collectLatest { enabled ->
+                persistSearchQueries = enabled
+                _uiState.value = _uiState.value.copy(rememberSearchFilters = enabled)
+                if (!enabled && _uiState.value.searchQuery.isNotBlank()) {
+                    _uiState.value = _uiState.value.copy(searchQuery = "")
+                    _uiState.value = _uiState.value.copy(
+                        filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            OnboardingPreferences.appListSearchQuery(context).collectLatest { query ->
+                if (!persistSearchQueries) return@collectLatest
+                if (_uiState.value.searchQuery == query) return@collectLatest
+                _uiState.value = _uiState.value.copy(searchQuery = query)
+                _uiState.value = _uiState.value.copy(
+                    filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
+                )
             }
         }
     }
@@ -69,6 +112,17 @@ class AppListViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(
             filteredApps = applyFilters(_uiState.value.allApps, _uiState.value)
         )
+        if (persistSearchQueries) {
+            viewModelScope.launch {
+                OnboardingPreferences.setAppListSearchQuery(context, query)
+            }
+        }
+    }
+
+    fun setSearchFilterMemoryEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            OnboardingPreferences.setSearchQueryPersistence(context, enabled)
+        }
     }
 
     fun onSortChange(sort: SortOption) {
@@ -120,17 +174,21 @@ class AppListViewModel @Inject constructor(
 
         // Search
         if (state.searchQuery.isNotBlank()) {
-            val query = state.searchQuery.lowercase()
-            result = result.filter {
-                it.appName.lowercase().contains(query) ||
-                        it.packageName.lowercase().contains(query)
+            val tokens = state.searchQuery
+                .lowercase()
+                .split(Regex("[\\s,]+"))
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+
+            result = result.filter { app ->
+                tokens.all { token -> matchesSearchToken(app, token, state) }
             }
         }
 
         // Filter
         result = when (state.filterOption) {
             FilterOption.ALL -> result
-            FilterOption.HIGH_RISK -> result.filter { it.riskScore >= 45 }
+            FilterOption.HIGH_RISK -> result.filter { it.riskScore >= state.highRiskThreshold }
             FilterOption.HAS_DANGEROUS -> result.filter { app ->
                 app.permissions.any { it.isDangerous && it.isGranted }
             }
@@ -170,6 +228,26 @@ class AppListViewModel @Inject constructor(
 
         return result
     }
+
+    private fun matchesSearchToken(app: AppInfo, token: String, state: AppListUiState): Boolean {
+        return app.appName.lowercase().contains(token) ||
+            app.packageName.lowercase().contains(token) ||
+            app.category.label.lowercase().contains(token) ||
+            app.installSourceLabel.lowercase().contains(token) ||
+            (state.trustLabels[app.packageName] ?: "").lowercase().contains(token) ||
+            app.permissions.any { permission ->
+                permission.permissionName.lowercase().contains(token) ||
+                    (permission.group ?: "").lowercase().contains(token)
+            } ||
+            (token.contains("sideload") && app.isSideloaded) ||
+            ((token == "high" || token == "high risk") && app.riskScore >= state.highRiskThreshold) ||
+            (token == "critical" && app.riskScore >= 85) ||
+            (token == "medium" && app.riskScore in 45..69) ||
+            ((token == "low" || token == "low risk") && app.riskScore < 45) ||
+            (token.contains("camera") && app.permissions.any { it.permissionName.contains("CAMERA", true) }) ||
+            (token.contains("microphone") && app.permissions.any { it.permissionName.contains("RECORD_AUDIO", true) }) ||
+            (token.contains("location") && app.permissions.any { it.permissionName.contains("LOCATION", true) })
+    }
 }
 
 data class AppListUiState(
@@ -182,7 +260,10 @@ data class AppListUiState(
     val filterOption: FilterOption = FilterOption.ALL,
     val selectedCategory: AppCategory? = null,
     val showSystemApps: Boolean = false,
-    val isBeginnerMode: Boolean = true
+    val highRiskThreshold: Int = 45,
+    val trustLabels: Map<String, String> = emptyMap(),
+    val isBeginnerMode: Boolean = true,
+    val rememberSearchFilters: Boolean = true
 )
 
 enum class SortOption(val label: String) {

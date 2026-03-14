@@ -37,8 +37,8 @@ android {
         applicationId = "com.apptracker"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "2.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -130,6 +130,10 @@ dependencies {
 
     // Charts (Vico)
     implementation("com.patrykandpatrick.vico:compose-m3:1.13.1")
+
+    // Glance (home screen widget)
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     // Debug
     debugImplementation("androidx.compose.ui:ui-tooling")

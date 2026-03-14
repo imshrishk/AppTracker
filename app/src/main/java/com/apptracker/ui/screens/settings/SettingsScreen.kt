@@ -1,6 +1,7 @@
 package com.apptracker.ui.screens.settings
 
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,11 +15,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Rule
 import androidx.compose.material.icons.filled.BatteryStd
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -28,6 +31,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
@@ -62,6 +66,12 @@ fun SettingsScreen(
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showCleanupDialog by remember { mutableStateOf(false) }
+    var showAddRuleDialog by remember { mutableStateOf(false) }
+    var ruleName by remember { mutableStateOf("") }
+    var ruleMetric by remember { mutableStateOf(SettingsViewModel.metricOptions.first()) }
+    var ruleComparator by remember { mutableStateOf(SettingsViewModel.comparatorOptions.first()) }
+    var ruleThreshold by remember { mutableStateOf("70") }
+    var ruleSeverity by remember { mutableStateOf(SettingsViewModel.severityOptions[2]) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -136,6 +146,24 @@ fun SettingsScreen(
                 }
             )
 
+            SettingsItem(
+                icon = Icons.Default.Info,
+                title = "Notification Permissions",
+                subtitle = "Allow alerts, scan summaries, and local monitoring notifications",
+                onClick = {
+                    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                        }
+                    } else {
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = android.net.Uri.parse("package:${context.packageName}")
+                        }
+                    }
+                    context.startActivity(intent)
+                }
+            )
+
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
             // Data Management
@@ -168,6 +196,35 @@ fun SettingsScreen(
                 onCheckedChange = { viewModel.setBeginnerMode(it) }
             )
 
+            SettingToggleItem(
+                icon = Icons.Default.Search,
+                title = "Remember search filters",
+                subtitle = "Persist App List and Global Search queries across restarts",
+                checked = state.searchQueryPersistence,
+                onCheckedChange = {
+                    viewModel.setSearchQueryPersistence(it)
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            if (it) {
+                                "Search memory enabled"
+                            } else {
+                                "Search memory disabled and saved filters cleared"
+                            }
+                        )
+                    }
+                }
+            )
+
+            SettingsItem(
+                icon = Icons.Default.Search,
+                title = "Reset search defaults",
+                subtitle = "Clear saved App List/Global Search filters and re-enable memory",
+                onClick = {
+                    viewModel.resetSearchDefaults()
+                    scope.launch { snackbarHostState.showSnackbar("Search defaults reset") }
+                }
+            )
+
             Text(
                 text = "Default Insights Period",
                 style = MaterialTheme.typography.titleSmall,
@@ -184,6 +241,124 @@ fun SettingsScreen(
                         onClick = { viewModel.setDefaultUsageRange(range) },
                         label = { Text(range.label) }
                     )
+                }
+            }
+
+            Text(
+                text = "High Risk Threshold",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(40, 45, 50, 60).forEach { threshold ->
+                    FilterChip(
+                        selected = state.highRiskThreshold == threshold,
+                        onClick = { viewModel.setHighRiskThreshold(threshold) },
+                        label = { Text("$threshold+") }
+                    )
+                }
+            }
+
+            Text(
+                text = "Heavy Background Threshold",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(1, 2, 3, 4).forEach { hours ->
+                    FilterChip(
+                        selected = state.backgroundHeavyHours == hours,
+                        onClick = { viewModel.setBackgroundHeavyHours(hours) },
+                        label = { Text("$hours h") }
+                    )
+                }
+            }
+
+            Text(
+                text = "DNS Leak Sensitivity",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    1 to "Low",
+                    2 to "Balanced",
+                    3 to "High"
+                ).forEach { (level, label) ->
+                    FilterChip(
+                        selected = state.dnsLeakSensitivity == level,
+                        onClick = { viewModel.setDnsLeakSensitivity(level) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+            Text(
+                text = "Controls how aggressively resolver drift and unattributed DNS are flagged.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+            SectionTitle("Custom Rules")
+
+            SettingsItem(
+                icon = Icons.AutoMirrored.Filled.Rule,
+                title = "Add Rule",
+                subtitle = "Create local alert logic for risk, permissions, usage, or mobile data",
+                onClick = { showAddRuleDialog = true }
+            )
+
+            if (state.customRules.isEmpty()) {
+                Text(
+                    text = "No custom rules yet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                state.customRules.forEach { rule ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(rule.name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        "${rule.metric} ${rule.comparator} ${rule.threshold} • ${rule.severity}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = rule.enabled,
+                                    onCheckedChange = { viewModel.setRuleEnabled(rule.id, it) }
+                                )
+                            }
+                            TextButton(onClick = { viewModel.deleteRule(rule.id) }) {
+                                Text("Delete Rule")
+                            }
+                        }
+                    }
                 }
             }
 
@@ -279,6 +454,94 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showAddRuleDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddRuleDialog = false },
+            title = { Text("Add Custom Rule") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = ruleName,
+                        onValueChange = { ruleName = it },
+                        label = { Text("Rule Name") },
+                        singleLine = true
+                    )
+
+                    Text("Metric", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsViewModel.metricOptions.forEach { metric ->
+                            FilterChip(
+                                selected = ruleMetric == metric,
+                                onClick = { ruleMetric = metric },
+                                label = { Text(metricLabel(metric)) }
+                            )
+                        }
+                    }
+
+                    Text("Comparator", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsViewModel.comparatorOptions.forEach { comparator ->
+                            FilterChip(
+                                selected = ruleComparator == comparator,
+                                onClick = { ruleComparator = comparator },
+                                label = { Text(comparator) }
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = ruleThreshold,
+                        onValueChange = { ruleThreshold = it.filter { ch -> ch.isDigit() || ch == '.' }.take(6) },
+                        label = { Text("Threshold") },
+                        singleLine = true
+                    )
+
+                    Text("Severity", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SettingsViewModel.severityOptions.forEach { severity ->
+                            FilterChip(
+                                selected = ruleSeverity == severity,
+                                onClick = { ruleSeverity = severity },
+                                label = { Text(severity) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val threshold = ruleThreshold.toFloatOrNull()
+                    if (!ruleName.isBlank() && threshold != null) {
+                        viewModel.createCustomRule(
+                            name = ruleName,
+                            metric = ruleMetric,
+                            comparator = ruleComparator,
+                            threshold = threshold,
+                            severity = ruleSeverity
+                        )
+                        ruleName = ""
+                        ruleMetric = SettingsViewModel.metricOptions.first()
+                        ruleComparator = SettingsViewModel.comparatorOptions.first()
+                        ruleThreshold = "70"
+                        ruleSeverity = SettingsViewModel.severityOptions[2]
+                        showAddRuleDialog = false
+                    }
+                }) { Text("Add") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddRuleDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+private fun metricLabel(metric: String): String = when (metric) {
+    "risk_score" -> "Risk Score"
+    "dangerous_permissions" -> "Dangerous Permissions"
+    "background_hours" -> "Background Hours"
+    "mobile_mb" -> "Mobile Data MB"
+    else -> metric
 }
 
 @Composable

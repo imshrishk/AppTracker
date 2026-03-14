@@ -23,6 +23,9 @@ interface NetworkHistoryDao {
     """)
     fun getUsageSince(since: Long): Flow<List<NetworkHistoryEntity>>
 
+    @Query("SELECT * FROM network_history WHERE packageName = :packageName AND timestamp <= :before ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestBeforeTimestamp(packageName: String, before: Long): NetworkHistoryEntity?
+
     @Query("DELETE FROM network_history WHERE timestamp < :before")
     suspend fun deleteOlderThan(before: Long)
 }

@@ -76,6 +76,15 @@ class PermissionRepository @Inject constructor(
         val isSystemApp = (appInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) ?: 0) != 0
         val permissions = extractPermissions(pkg)
         val appOps = extractAppOps(pkg.packageName)
+        val installSourcePackage = getInstallSourcePackage(pkg.packageName)
+        val isSideloaded = !isSystemApp && (installSourcePackage == null || installSourcePackage.isBlank())
+        val installSourceLabel = when {
+            isSystemApp -> "System"
+            installSourcePackage.equals("com.android.vending", ignoreCase = true) -> "Google Play"
+            installSourcePackage.equals("com.amazon.venezia", ignoreCase = true) -> "Amazon Appstore"
+            installSourcePackage.isNullOrBlank() -> "Sideloaded / Unknown"
+            else -> installSourcePackage
+        }
 
         return AppInfo(
             packageName = pkg.packageName,
@@ -96,6 +105,7 @@ class PermissionRepository @Inject constructor(
             isEnabled = appInfo?.enabled ?: false,
             dataDir = appInfo?.dataDir,
             sourceDir = appInfo?.sourceDir,
+            linuxUid = appInfo?.uid ?: -1,
             category = AppCategoryDetector.infer(
                 packageName = pkg.packageName,
                 appName = appName,
@@ -103,8 +113,24 @@ class PermissionRepository @Inject constructor(
             ),
             permissions = permissions,
             appOpsEntries = appOps,
-            storageUsage = queryStorageUsage(pkg.packageName)
+            storageUsage = queryStorageUsage(pkg.packageName),
+            installSourcePackage = installSourcePackage,
+            installSourceLabel = installSourceLabel,
+            isSideloaded = isSideloaded
         )
+    }
+
+    private fun getInstallSourcePackage(packageName: String): String? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                packageManager.getInstallSourceInfo(packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getInstallerPackageName(packageName)
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun queryStorageUsage(packageName: String): StorageUsageInfo? {
